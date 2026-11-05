@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "daqscope"
+version = "0.1.0.dev0"
+description = "Open-source DAQ acquisition core and GUI with a simulated backend"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.23"]
+
+[project.optional-dependencies]
+ni = ["nidaqmx>=1.0"]
+gui = ["PySide6>=6.5", "pyqtgraph>=0.13"]
+hdf5 = ["h5py>=3.8"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+daqscope = "daqscope.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
