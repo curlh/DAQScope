@@ -26,7 +26,7 @@ def _tag(text: str, color: str, anchor) -> pg.TextItem:
 class ChannelView:
     enabled: bool = True
     vdiv: float = 1.0
-    pos: float = 0.0             # vertical position in divisions
+    offset: float = 0.0          # volts added before scaling, positive moves the trace up
     invert: bool = False
 
 
@@ -152,16 +152,16 @@ class ScopeView(pg.PlotWidget):
             v0 = fr.valid_from
             t, y = minmax_decimate(fr.time[v0:], fr.data[i, v0:], npx)
             sign = -1.0 if channels[i].invert else 1.0
-            tr.setData(t / tdiv, sign * y / channels[i].vdiv + channels[i].pos)
+            tr.setData(t / tdiv, (sign * y + channels[i].offset) / channels[i].vdiv)
         for i, tag in enumerate(self._tags):
             on = i < len(channels) and channels[i].enabled
             tag.setVisible(on)
             if on:
-                tag.setPos(-HX, channels[i].pos)
+                tag.setPos(-HX, channels[i].offset / channels[i].vdiv)
         self.trig_pos_marker.setData(x=[-HX + DIVS_X * trigger_pos], y=[HY - 0.2])
         if 0 <= trig_source < len(channels):
             src = channels[trig_source]
-            ydiv = trig_level / src.vdiv + src.pos
+            ydiv = (trig_level + src.offset) / src.vdiv
             self.trig_tag.setPos(HX, ydiv)
             self._block = True
             self.level_line.setValue(ydiv)
