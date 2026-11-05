@@ -5,7 +5,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "daqscope"
 version = "0.1.0.dev0"
-description = "Open-source DAQ acquisition core and GUI with a simulated backend"
+description = "Oscilloscope-style GUI and Python acquisition library for NI DAQ devices, with a built-in simulated device"
+keywords = ["daq", "data-acquisition", "oscilloscope", "nidaqmx", "national-instruments", "instrumentation", "pyside6", "pyqtgraph"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+    "Topic :: System :: Hardware",
+]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"
