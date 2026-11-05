@@ -40,11 +40,11 @@ and only rates the card supports for the current selection are offered.
 ## Scope
 
 The window follows a bench scope. The screen has the channel tiles and the horizontal controls
-(time/div, trigger position) underneath. Click a tile to select a channel, scroll over it to step
-its V/div, scroll over the screen to step time/div. The panel on the right shows the menu of the
+(time/div, trigger position) underneath. Each tile is a channel key: press it to turn the channel on and select it, press the selected
+channel again to turn it off. Scroll over a tile to step its V/div, scroll over the screen to step time/div. The panel on the right shows the menu of the
 selected channel and the trigger. Cursors and measurements are off until you switch them on.
 
-- Screen: 10 x 8 divisions, per-channel V/div (1 mV to 5 V), position and invert, time/div in 1-2-5 steps.
+- Screen: 10 x 8 divisions, per-channel V/div (1 mV to 5 V), offset in volts and invert, time/div in 1-2-5 steps.
 - Trigger: rising or falling edge on any channel, Auto / Normal / Single, draggable level line.
   Hysteresis is derived from the noise on the source (6 sigma of the second difference, capped at
   40 % of the peak-to-peak range) or set by hand. The trigger point is interpolated between

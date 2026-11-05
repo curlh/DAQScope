@@ -53,7 +53,8 @@ def _prop(widget, name, value):
     repolish(widget)
 
 
-def _default_pos(i: int, n: int) -> float:
+def _default_offset(i: int, n: int) -> float:
+    """Spread the channels over the screen at 1 V/div, in volts."""
     return ((n - 1) / 2 - i) * 1.6
 
 
@@ -66,22 +67,32 @@ class Card(W.QFrame):
         super().__init__()
         self.setObjectName("seg")
         self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(40)
         self._color = color
         lay = W.QHBoxLayout(self)
-        lay.setContentsMargins(10, 4, 10, 4)
-        lay.setSpacing(6)
+        lay.setContentsMargins(8, 5, 14, 5)
+        lay.setSpacing(10)
         self.title = _label(title, "muted")
         self.value = _label("", "value")
         lay.addWidget(self.title)
         lay.addWidget(self.value)
-        self.set_dim(False)
+        self.set_state(True, False)
 
     def set_value(self, text: str) -> None:
         self.value.setText(text)
 
-    def set_dim(self, dim: bool) -> None:
-        self.title.setStyleSheet(f"color:{'#6a6a6a' if dim else self._color}; font-weight:bold;")
-        self.value.setStyleSheet("color:#6a6a6a;" if dim else "")
+    def set_state(self, on: bool, selected: bool) -> None:
+        """On: the channel box is filled with the channel colour, like a lit key. Off: hollow grey.
+        The selected channel also gets a bar on top."""
+        if on:
+            self.title.setStyleSheet(f"background:{self._color}; color:#000; font-weight:bold;"
+                                     " font-size:13px; padding: 4px 9px;")
+            self.value.setStyleSheet("")
+        else:
+            self.title.setStyleSheet("color:#7a7a7a; font-weight:bold; font-size:13px;"
+                                     " border:1px solid #5a5a5a; padding: 3px 8px;")
+            self.value.setStyleSheet("color:#6a6a6a;")
+        self.setStyleSheet(f"QFrame#seg {{ border-top: 3px solid {self._color if selected else 'transparent'}; }}")
 
     def mousePressEvent(self, ev) -> None:
         self.clicked.emit()
@@ -108,7 +119,7 @@ class MainWindow(W.QMainWindow):
         self.acq: Tuple[str, int] = ("normal", 1)     # acquire mode and its average count
         self.averager = FrameAverager()
         self._sig = None
-        self._saved = {}                 # per channel name: (vdiv, pos, invert), kept across re-applies
+        self._saved = {}                 # per channel name: (vdiv, offset, invert), kept across re-applies
         self._frame: Optional[ScopeFrame] = None
         self._last_measure = 0.0
         self._last_status = ""
@@ -209,7 +220,7 @@ class MainWindow(W.QMainWindow):
         self.tpos_spin.valueChanged.connect(self._changed)
         horiz.addWidget(_label("Time/div"))
         horiz.addWidget(self.tdiv_box)
-        horiz.addWidget(_label("Position"))
+        horiz.addWidget(_label("Trig pos"))
         horiz.addWidget(self.tpos_spin)
         wrap = W.QWidget()
         wrap.setLayout(horiz)
@@ -219,19 +230,16 @@ class MainWindow(W.QMainWindow):
     def _channel_form(self):
         f = W.QFormLayout()
         f.setVerticalSpacing(6)
-        self.disp_chk = W.QCheckBox("On")
-        self.disp_chk.toggled.connect(self._changed)
         self.vbox = W.QComboBox()
         for v in VDIV_STEPS:
             self.vbox.addItem(eng(v, "V") + "/div", v)
         self.vbox.activated.connect(self._changed)
-        self.pos_spin = _spin(-4, 4, 0.1, 2, " div")
-        self.pos_spin.valueChanged.connect(self._changed)
+        self.offset_spin = _spin(-100, 100, 0.1, 3, " V")
+        self.offset_spin.valueChanged.connect(self._changed)
         self.inv_chk = W.QCheckBox("Invert")
         self.inv_chk.toggled.connect(self._changed)
-        f.addRow("Display", self.disp_chk)
         f.addRow("Scale", self.vbox)
-        f.addRow("Position", self.pos_spin)
+        f.addRow("Offset", self.offset_spin)
         f.addRow("", self.inv_chk)
         return f
 
@@ -438,7 +446,7 @@ class MainWindow(W.QMainWindow):
             W.QMessageBox.warning(self, "Acquisition", "Select at least one channel.")
             return
         for ch, nm in zip(self.channels, self.names):
-            self._saved[nm] = (ch.vdiv, ch.pos, ch.invert)
+            self._saved[nm] = (ch.vdiv, ch.offset, ch.invert)
         self._teardown()
         try:
             cfg = AIConfig([AIChannel(n) for n in names], sample_rate=fs)
@@ -455,8 +463,8 @@ class MainWindow(W.QMainWindow):
         self.engine = ScopeEngine(fs, n)
         self.channels = []
         for i, nm in enumerate(names):
-            vdiv, pos, inv = self._saved.get(nm, (1.0, _default_pos(i, n), False))
-            self.channels.append(ChannelView(True, vdiv, pos, inv))
+            vdiv, offset, inv = self._saved.get(nm, (1.0, _default_offset(i, n), False))
+            self.channels.append(ChannelView(True, vdiv, offset, inv))
         self.meas = [(s, k) for s, k in self.meas if s < n]
         self.sel = min(self.sel, n - 1)
         self.view.set_channel_count(n)
@@ -483,7 +491,7 @@ class MainWindow(W.QMainWindow):
         self.cards = []
         for i in range(len(self.names)):
             c = Card(f"CH{i + 1}", COLORS[i % len(COLORS)])
-            c.clicked.connect(lambda i=i: self._select_channel(i))
+            c.clicked.connect(lambda i=i: self._channel_key(i))
             c.wheel.connect(lambda d, i=i: self._step_vdiv(i, -d))
             self.cards_row.insertWidget(i, c)
             self.cards.append(c)
@@ -506,17 +514,30 @@ class MainWindow(W.QMainWindow):
         col = COLORS[i % len(COLORS)]
         self.ch_box.setTitle(f"Channel {i + 1}")
         self.ch_box.setStyleSheet(f"QGroupBox::title {{ color: {col}; }}")
-        for w in (self.disp_chk, self.vbox, self.pos_spin, self.inv_chk):
+        for w in (self.vbox, self.offset_spin, self.inv_chk):
             w.blockSignals(True)
-        self.disp_chk.setChecked(ch.enabled)
         self.vbox.setCurrentIndex(max(0, self.vbox.findData(ch.vdiv)))
-        self.pos_spin.setValue(ch.pos)
+        self.offset_spin.setSingleStep(ch.vdiv / 10)
+        self.offset_spin.setValue(ch.offset)
         self.inv_chk.setChecked(ch.invert)
-        for w in (self.disp_chk, self.vbox, self.pos_spin, self.inv_chk):
+        for w in (self.vbox, self.offset_spin, self.inv_chk):
             w.blockSignals(False)
-        for k, c in enumerate(self.cards):
-            _prop(c, "selected", k == i)
+        for k, (c, cv) in enumerate(zip(self.cards, self.channels)):
+            c.set_state(cv.enabled, k == i)
         self._update_cursor_readout()
+
+    def _channel_key(self, i: int) -> None:
+        """Channel key: off -> on and selected, on -> selected, selected -> off."""
+        ch = self.channels[i]
+        if not ch.enabled:
+            ch.enabled = True
+            self._select_channel(i)
+        elif i != self.sel:
+            self._select_channel(i)
+        else:
+            ch.enabled = False
+            self._select_channel(i)
+        self._refresh()
 
     def _step_combo(self, box: W.QComboBox, step: int) -> None:
         """Move a 1-2-5 combo by one step, as turning a knob."""
@@ -539,9 +560,8 @@ class MainWindow(W.QMainWindow):
         if self._loading or self.engine is None:
             return
         ch = self.channels[self.sel]
-        ch.enabled = self.disp_chk.isChecked()
         ch.vdiv = self.vbox.currentData()
-        ch.pos = self.pos_spin.value()
+        ch.offset = self.offset_spin.value()
         ch.invert = self.inv_chk.isChecked()
         e = self.engine
         e.time_per_div = self.tdiv_box.currentData()
@@ -564,9 +584,9 @@ class MainWindow(W.QMainWindow):
     def _refresh(self) -> None:
         e = self.engine
         self.view.redraw(self.channels, e.time_per_div, e.trigger_pos, e.trigger.source, e.trigger.level)
-        for card, ch in zip(self.cards, self.channels):
+        for k, (card, ch) in enumerate(zip(self.cards, self.channels)):
             card.set_value(f"{eng(ch.vdiv, 'V')}/div" + (" inv" if ch.invert else ""))
-            card.set_dim(not ch.enabled)
+            card.set_state(ch.enabled, k == self.sel)
         self._overlay()
         self._update_cursor_readout()
 
@@ -583,7 +603,7 @@ class MainWindow(W.QMainWindow):
         if self.engine is None:
             return
         ch = self.channels[self.engine.trigger.source]
-        self.level_spin.setValue((ydiv - ch.pos) * ch.vdiv)      # valueChanged runs _changed
+        self.level_spin.setValue(ydiv * ch.vdiv - ch.offset)      # valueChanged runs _changed
 
     def _toggle_run(self) -> None:
         if self.engine is None:
@@ -649,7 +669,7 @@ class MainWindow(W.QMainWindow):
             if not np.isfinite(m["pp"]):
                 continue
             ch.vdiv = min(5.0, max(1e-3, ceil_125(max(m["pp"], 1e-6) / 6)))    # signal fills 6 of 8 divisions
-            ch.pos = -(m["max"] + m["min"]) / 2 / ch.vdiv
+            ch.offset = -(m["max"] + m["min"]) / 2                 # centre the signal
             if i == src:
                 self.level_spin.setValue((m["max"] + m["min"]) / 2)
                 if np.isfinite(m["freq"]):
@@ -696,7 +716,7 @@ class MainWindow(W.QMainWindow):
         ch = self.channels[self.sel]
         td = self.engine.time_per_div
         t1, t2 = (ln.value() * td for ln in self.view.cur_t)
-        v1, v2 = ((ln.value() - ch.pos) * ch.vdiv for ln in self.view.cur_v)
+        v1, v2 = (ln.value() * ch.vdiv - ch.offset for ln in self.view.cur_v)
         dt = abs(t2 - t1)
         inv = eng(1 / dt, "Hz") if dt > 0 else "--"
         self.cur_label.setText(f"Source  CH{self.sel + 1}\nΔT      {eng(dt, 's')}\n1/ΔT    {inv}\n"
