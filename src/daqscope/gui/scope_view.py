@@ -12,7 +12,14 @@ from .qt import Qt, Signal, pg
 
 HX, HY = DIVS_X / 2, DIVS_Y / 2
 
-COLORS = ["#f5c518", "#22d3ee", "#f472b6", "#4ade80", "#fb923c", "#a78bfa", "#f87171", "#60a5fa"]
+COLORS = ["#ffd400", "#00c8ff", "#ff3fd0", "#47e04c", "#ff8a1f", "#9a7bff", "#ff4d4d", "#4da3ff"]
+AMBER = "#ffb000"
+
+
+def _tag(text: str, color: str, anchor) -> pg.TextItem:
+    """Small filled label, like the channel and trigger markers on a bench scope."""
+    return pg.TextItem(html=f"<span style='color:#000; font-weight:700'>&nbsp;{text}&nbsp;</span>",
+                       fill=pg.mkBrush(color), anchor=anchor)
 
 
 @dataclass
@@ -27,7 +34,7 @@ class ScopeView(pg.PlotWidget):
     cursorsMoved = Signal()
 
     def __init__(self, parent=None):
-        super().__init__(parent, background="#05070b", antialias=True)
+        super().__init__(parent, background="#000000", antialias=True)
         self.setMenuEnabled(False)
         self.hideAxis("left")
         self.hideAxis("bottom")
@@ -41,28 +48,25 @@ class ScopeView(pg.PlotWidget):
         self._frame: Optional[ScopeFrame] = None
         self._tdiv = 1e-3
         self._traces: List[pg.PlotCurveItem] = []
-        self._glows: List[pg.PlotCurveItem] = []
+        self._tags: List[pg.TextItem] = []
         self._block = False
         self._draw_graticule()
 
-        self.ground = pg.ScatterPlotItem(symbol="t2", size=11, pen=None)
-        self.ground.setZValue(5)
-        self.addItem(self.ground)
-        self.trig_marker = pg.ScatterPlotItem(symbol="t3", size=11, pen=None)
-        self.trig_marker.setZValue(5)
-        self.addItem(self.trig_marker)
-        self.trig_pos_marker = pg.ScatterPlotItem(symbol="t", size=11, pen=None,
-                                                  brush=pg.mkBrush("#ff9933"))
+        self.trig_tag = _tag("T", AMBER, (1, 0.5))
+        self.trig_tag.setZValue(5)
+        self.addItem(self.trig_tag)
+        self.trig_pos_marker = pg.ScatterPlotItem(symbol="t", size=9, pen=None,
+                                                  brush=pg.mkBrush(AMBER))
         self.trig_pos_marker.setZValue(5)
         self.addItem(self.trig_pos_marker)
 
         self.level_line = pg.InfiniteLine(angle=0, movable=True, bounds=(-HY, HY),
-                                          pen=pg.mkPen("#ff9933", style=Qt.DashLine, width=1))
+                                          pen=pg.mkPen(AMBER, style=Qt.DotLine, width=1))
         self.level_line.setZValue(4)
         self.level_line.sigPositionChanged.connect(self._level_dragged)
         self.addItem(self.level_line)
 
-        dash = pg.mkPen("#dddddd", style=Qt.DashLine, width=1)
+        dash = pg.mkPen("#e8e8ee", style=Qt.DashLine, width=1)
         self.cur_t = [pg.InfiniteLine(pos=p, angle=90, movable=True, pen=dash, bounds=(-HX, HX)) for p in (-2, 2)]
         self.cur_v = [pg.InfiniteLine(pos=p, angle=0, movable=True, pen=dash, bounds=(-HY, HY)) for p in (-2, 2)]
         for ln in self.cur_t + self.cur_v:
@@ -88,7 +92,7 @@ class ScopeView(pg.PlotWidget):
         for y in range(-int(HY), int(HY) + 1):
             xs += [-HX, HX]
             ys += [y, y]
-        grid = pg.PlotCurveItem(xs, ys, connect="pairs", pen=pg.mkPen((34, 42, 58), width=1))
+        grid = pg.PlotCurveItem(xs, ys, connect="pairs", pen=pg.mkPen((58, 58, 64), width=1, style=Qt.DotLine))
         grid.setZValue(0)
         self.addItem(grid)
         tx, ty = [], []
@@ -100,30 +104,29 @@ class ScopeView(pg.PlotWidget):
             y = i / 5
             tx += [-0.08, 0.08]
             ty += [y, y]
-        ticks = pg.PlotCurveItem(tx, ty, connect="pairs", pen=pg.mkPen((96, 108, 132), width=1))
+        ticks = pg.PlotCurveItem(tx, ty, connect="pairs", pen=pg.mkPen((120, 120, 130), width=1))
         ticks.setZValue(1)
         self.addItem(ticks)
         axes = pg.PlotCurveItem([-HX, HX, 0, 0], [0, 0, -HY, HY], connect=np.array([1, 0, 1, 0]),
-                                pen=pg.mkPen((62, 72, 94), width=1))
+                                pen=pg.mkPen((84, 84, 92), width=1))
         axes.setZValue(1)
         self.addItem(axes)
 
     def set_channel_count(self, n: int) -> None:
-        for t in self._traces + self._glows:
+        for t in self._traces + self._tags:
             self.removeItem(t)
-        self._traces, self._glows = [], []
+        self._traces, self._tags = [], []
         for i in range(n):
-            col = pg.mkColor(COLORS[i % len(COLORS)])
-            halo = pg.mkColor(col)
-            halo.setAlpha(46)
-            g = pg.PlotCurveItem(pen=pg.mkPen(halo, width=6))      # soft halo under the trace
-            g.setZValue(2)
-            t = pg.PlotCurveItem(pen=pg.mkPen(col, width=1.8))
+            col = COLORS[i % len(COLORS)]
+            t = pg.PlotCurveItem(pen=pg.mkPen(col, width=1.2))
             t.setZValue(3)
-            self.addItem(g)
             self.addItem(t)
-            self._glows.append(g)
             self._traces.append(t)
+            tag = _tag(str(i + 1), col, (0, 0.5))          # channel number box at the left edge
+            tag.setZValue(5)
+            tag.setPos(-HX, 0)
+            self.addItem(tag)
+            self._tags.append(tag)
         self._frame = None
 
     def set_frame(self, frame: Optional[ScopeFrame]) -> None:
@@ -131,7 +134,7 @@ class ScopeView(pg.PlotWidget):
 
     def clear_frame(self) -> None:
         self._frame = None
-        for t in self._traces + self._glows:
+        for t in self._traces:
             t.setData([], [])
 
     def redraw(self, channels: List[ChannelView], tdiv: float, trigger_pos: float,
@@ -143,26 +146,20 @@ class ScopeView(pg.PlotWidget):
         for i, tr in enumerate(self._traces):
             if fr is None or i >= len(channels) or not channels[i].enabled or i >= fr.data.shape[0]:
                 tr.setData([], [])
-                self._glows[i].setData([], [])
                 continue
             v0 = fr.valid_from
             t, y = minmax_decimate(fr.time[v0:], fr.data[i, v0:], npx)
-            x, yy = t / tdiv, y / channels[i].vdiv + channels[i].pos
-            tr.setData(x, yy)
-            self._glows[i].setData(x, yy)
-        xs, ys, brushes = [], [], []
-        for i, ch in enumerate(channels):
-            if ch.enabled:
-                xs.append(-HX + 0.18)
-                ys.append(ch.pos)
-                brushes.append(pg.mkBrush(COLORS[i % len(COLORS)]))
-        self.ground.setData(x=xs, y=ys, brush=brushes)
+            tr.setData(t / tdiv, y / channels[i].vdiv + channels[i].pos)
+        for i, tag in enumerate(self._tags):
+            on = i < len(channels) and channels[i].enabled
+            tag.setVisible(on)
+            if on:
+                tag.setPos(-HX, channels[i].pos)
         self.trig_pos_marker.setData(x=[-HX + DIVS_X * trigger_pos], y=[HY - 0.2])
         if 0 <= trig_source < len(channels):
             src = channels[trig_source]
             ydiv = trig_level / src.vdiv + src.pos
-            col = COLORS[trig_source % len(COLORS)]
-            self.trig_marker.setData(x=[HX - 0.18], y=[ydiv], brush=[pg.mkBrush(col)])
+            self.trig_tag.setPos(HX, ydiv)
             self._block = True
             self.level_line.setValue(ydiv)
             self._block = False
@@ -172,8 +169,8 @@ class ScopeView(pg.PlotWidget):
             self.triggerLevelMoved.emit(float(self.level_line.value()))
 
     def set_status(self, text: str, color: str, rate: str = "") -> None:
-        self.status.setHtml(f"<span style='color:{color}; font-size:13px; font-weight:700'>&#9679; {text}</span>")
-        self.rate_label.setHtml(f"<span style='color:#7d889c; font-size:12px'>{rate}</span>")
+        self.status.setHtml(f"<span style='color:{color}; font-weight:700'>{text.upper()}</span>")
+        self.rate_label.setHtml(f"<span style='color:#74747e'>{rate}</span>")
 
     def show_cursors(self, on: bool) -> None:
         for ln in self.cur_t + self.cur_v:

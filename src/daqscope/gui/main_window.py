@@ -17,7 +17,6 @@ from .theme import MUTED, STATUS_COLORS, repolish
 from .units import ceil_125, eng, steps_125
 
 W = QtWidgets
-ACCENT_CARD = "#4f9dff"
 RATES = [1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 2.5e5]
 MEASURES = [("Vpp", "pp", "V"), ("Max", "max", "V"), ("Min", "min", "V"), ("Mean", "mean", "V"),
             ("RMS", "rms", "V"), ("Freq", "freq", "Hz"), ("Period", "period", "s"), ("Duty", "duty", "")]
@@ -47,21 +46,19 @@ def _kind(btn, kind):
 
 
 class Card(W.QFrame):
-    """A readout tile under the screen. Click toggles it, the wheel steps its setting."""
+    """One segment of the readout bar. Click toggles it, the wheel steps its setting."""
     clicked = QtCore.Signal()
     wheel = QtCore.Signal(int)
 
-    def __init__(self, title: str, color: Optional[str] = None):
+    def __init__(self, title: str, color: Optional[str] = None, badge: bool = False):
         super().__init__()
-        self.setObjectName("card")
+        self.setObjectName("seg")
         self.setCursor(Qt.PointingHandCursor)
-        self._color = color
-        lay = W.QVBoxLayout(self)
-        lay.setContentsMargins(12, 7, 12, 8)
-        lay.setSpacing(1)
+        self._color, self._badge = color, badge
+        lay = W.QHBoxLayout(self)
+        lay.setContentsMargins(8, 4, 12, 4)
+        lay.setSpacing(8)
         self.title = _label(title, "section")
-        if color:
-            self.title.setStyleSheet(f"color:{color};")
         self.value = _label("", "value")
         lay.addWidget(self.title)
         lay.addWidget(self.value)
@@ -71,9 +68,13 @@ class Card(W.QFrame):
         self.value.setText(text)
 
     def set_dim(self, dim: bool) -> None:
-        edge = self._color or "#2a354b"
-        self.setStyleSheet(f"QFrame#card {{ border-left: 3px solid {edge if not dim else '#2a354b'}; }}"
-                           + (" QLabel { color: #4a546a; }" if dim else ""))
+        if self._badge:          # channel number in a filled box, as on the screen edge
+            bg, fg = ("#2b2b30", "#74747e") if dim else (self._color, "#000")
+            self.title.setStyleSheet(f"background:{bg}; color:{fg}; font-size:12px; font-weight:700;"
+                                     " padding: 1px 6px;")
+        elif self._color:
+            self.title.setStyleSheet(f"color:{self._color};")
+        self.value.setStyleSheet("color:#4a4a52;" if dim else "")
 
     def mousePressEvent(self, ev) -> None:
         self.clicked.emit()
@@ -120,8 +121,8 @@ class MainWindow(W.QMainWindow):
         outer.addWidget(self._header())
 
         body = W.QHBoxLayout()
-        body.setContentsMargins(14, 12, 14, 12)
-        body.setSpacing(14)
+        body.setContentsMargins(10, 10, 10, 10)
+        body.setSpacing(10)
         outer.addLayout(body, 1)
 
         left = W.QVBoxLayout()
@@ -132,12 +133,15 @@ class MainWindow(W.QMainWindow):
         frame = W.QFrame()
         frame.setObjectName("screenFrame")
         fl = W.QVBoxLayout(frame)
-        fl.setContentsMargins(6, 6, 6, 6)
+        fl.setContentsMargins(1, 1, 1, 1)
         fl.addWidget(self.view)
         left.addWidget(frame, 1)
-        self.cards_row = W.QHBoxLayout()
-        self.cards_row.setSpacing(8)
-        left.addLayout(self.cards_row)
+        bar = W.QFrame()
+        bar.setObjectName("bar")
+        self.cards_row = W.QHBoxLayout(bar)
+        self.cards_row.setContentsMargins(0, 0, 0, 0)
+        self.cards_row.setSpacing(0)
+        left.addWidget(bar)
         body.addLayout(left, 1)
 
         side = W.QVBoxLayout()
@@ -145,11 +149,11 @@ class MainWindow(W.QMainWindow):
         self.tabs = W.QTabWidget()
         self.tabs.tabBar().setUsesScrollButtons(False)
         self.tabs.tabBar().setExpanding(True)
-        self.tabs.addTab(self._tab(self._vertical_page()), "Channels")
-        self.tabs.addTab(self._tab(self._horizontal_page()), "Timebase")
-        self.tabs.addTab(self._tab(self._trigger_page()), "Trigger")
-        self.tabs.addTab(self._tab(self._cursor_page()), "Cursors")
-        self.tabs.addTab(self._tab(self._acq_page()), "Setup")
+        self.tabs.addTab(self._tab(self._vertical_page()), "CH")
+        self.tabs.addTab(self._tab(self._horizontal_page()), "TIME")
+        self.tabs.addTab(self._tab(self._trigger_page()), "TRIG")
+        self.tabs.addTab(self._tab(self._cursor_page()), "CURS")
+        self.tabs.addTab(self._tab(self._acq_page()), "SETUP")
         side.addWidget(self.tabs, 5)
         side.addWidget(_label("MEASUREMENTS", "section"))
         self.table = W.QTableWidget(len(MEASURES), 0)
@@ -157,12 +161,12 @@ class MainWindow(W.QMainWindow):
         self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(W.QAbstractItemView.NoSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
-        self.table.verticalHeader().setDefaultSectionSize(24)
+        self.table.verticalHeader().setDefaultSectionSize(22)
         self.table.horizontalHeader().setSectionResizeMode(W.QHeaderView.Stretch)
         side.addWidget(self.table, 4)
         sw = W.QWidget()
         sw.setLayout(side)
-        sw.setFixedWidth(360)
+        sw.setFixedWidth(400)
         body.addWidget(sw)
         self.statusBar().showMessage("")
 
@@ -170,7 +174,7 @@ class MainWindow(W.QMainWindow):
         bar = W.QFrame()
         bar.setObjectName("header")
         h = W.QHBoxLayout(bar)
-        h.setContentsMargins(18, 10, 14, 10)
+        h.setContentsMargins(14, 8, 10, 8)
         h.setSpacing(10)
         brand = W.QLabel("DAQSCOPE")
         brand.setObjectName("brand")
@@ -186,14 +190,14 @@ class MainWindow(W.QMainWindow):
         h.addStretch(1)
         self.run_btn = W.QPushButton("RUN")
         self.run_btn.clicked.connect(self._toggle_run)
-        self.single_btn = W.QPushButton("Single")
+        self.single_btn = W.QPushButton("SINGLE")
         self.single_btn.clicked.connect(self._single)
-        self.auto_btn = W.QPushButton("Autoset")
+        self.auto_btn = W.QPushButton("AUTOSET")
         self.auto_btn.clicked.connect(self._autoset)
         _kind(self.auto_btn, "accent")
-        self.rec_btn = W.QPushButton("Record")
+        self.rec_btn = W.QPushButton("REC")
         self.rec_btn.clicked.connect(self._toggle_record)
-        self.save_btn = W.QPushButton("Save frame")
+        self.save_btn = W.QPushButton("SAVE")
         self.save_btn.clicked.connect(self._save_frame)
         for b in (self.run_btn, self.single_btn, self.auto_btn, self.rec_btn, self.save_btn):
             h.addWidget(b)
@@ -226,13 +230,13 @@ class MainWindow(W.QMainWindow):
         self.chan_list.setMaximumHeight(130)
         self.chan_list.itemChanged.connect(lambda *_: self._fill_rates())
         self.rate_box = W.QComboBox()
-        self.apply_btn = W.QPushButton("Apply and restart")
+        self.apply_btn = W.QPushButton("APPLY")
         _kind(self.apply_btn, "accent")
         self.apply_btn.clicked.connect(self.apply_acquisition)
-        f.addRow("Backend", self.backend_box)
-        f.addRow("Device", self.device_box)
-        f.addRow("Inputs", self.chan_list)
-        f.addRow("Sample rate", self.rate_box)
+        f.addRow("BACKEND", self.backend_box)
+        f.addRow("DEVICE", self.device_box)
+        f.addRow("INPUTS", self.chan_list)
+        f.addRow("SAMPLE RATE", self.rate_box)
         f.addRow(self.apply_btn)
         page = self._page(f)
         return page
@@ -251,8 +255,8 @@ class MainWindow(W.QMainWindow):
         self.tpos_spin = _spin(0, 100, 5, 0, " %")
         self.tpos_spin.setValue(50)
         self.tpos_spin.valueChanged.connect(self._changed)
-        f.addRow("Time/div", self.tdiv_box)
-        f.addRow("Trigger position", self.tpos_spin)
+        f.addRow("TIME/DIV", self.tdiv_box)
+        f.addRow("TRIGGER POSITION", self.tpos_spin)
         return self._page(f)
 
     def _trigger_page(self):
@@ -276,17 +280,17 @@ class MainWindow(W.QMainWindow):
         hyst_row = W.QHBoxLayout()
         hyst_row.addWidget(self.hyst_spin, 1)
         hyst_row.addWidget(self.hyst_auto)
-        f.addRow("Source", self.src_box)
-        f.addRow("Slope", self.slope_box)
-        f.addRow("Mode", self.mode_box)
-        f.addRow("Level", self.level_spin)
-        f.addRow("Hysteresis", hyst_row)
+        f.addRow("SOURCE", self.src_box)
+        f.addRow("SLOPE", self.slope_box)
+        f.addRow("MODE", self.mode_box)
+        f.addRow("LEVEL", self.level_spin)
+        f.addRow("HYSTERESIS", hyst_row)
         return self._page(f)
 
     def _cursor_page(self):
         v = W.QVBoxLayout()
         row = W.QHBoxLayout()
-        self.cur_chk = W.QCheckBox("Show cursors")
+        self.cur_chk = W.QCheckBox("CURSORS")
         self.cur_chk.toggled.connect(self._cursors_toggled)
         self.cur_src = W.QComboBox()
         self.cur_src.activated.connect(self._update_cursor_readout)
@@ -401,7 +405,7 @@ class MainWindow(W.QMainWindow):
         self._changed()
         dev = self.device_box.currentData()
         self.device_label.setText(f"{dev.name} {dev.product_type}".strip() if dev else self.backend.name)
-        self.statusBar().showMessage(f"{self.backend.name}   {n} channels   {eng(fs, 'S/s')} per channel")
+        self.statusBar().showMessage(f"{self.backend.name}  {n}ch  {eng(fs, 'S/s')}/ch")
 
     def _build_channel_rows(self) -> None:
         while self.vgrid.count():
@@ -441,17 +445,17 @@ class MainWindow(W.QMainWindow):
                 w.deleteLater()
         self.ch_cards = []
         for i in range(len(self.names)):
-            c = Card(f"CH{i + 1}", COLORS[i % len(COLORS)])
+            c = Card(str(i + 1), COLORS[i % len(COLORS)], badge=True)
             c.clicked.connect(lambda i=i: self._rows[i][0].toggle())
             c.wheel.connect(lambda d, i=i: self._step_combo(self._rows[i][1], -d))
             self.cards_row.addWidget(c)
             self.ch_cards.append(c)
         self.cards_row.addStretch(1)
-        self.time_card = Card("TIMEBASE", ACCENT_CARD)
+        self.time_card = Card("TIME")
         self.time_card.wheel.connect(lambda d: self._step_combo(self.tdiv_box, -d))
-        self.trig_card = Card("TRIGGER", "#ff9933")
+        self.trig_card = Card("TRIG", "#ffb000")
         self.trig_card.wheel.connect(self._wheel_level)
-        self.rate_card = Card("SAMPLING", "#7d889c")
+        self.rate_card = Card("RATE")
         for c in (self.time_card, self.trig_card, self.rate_card):
             self.cards_row.addWidget(c)
 
@@ -506,7 +510,7 @@ class MainWindow(W.QMainWindow):
         t = e.trigger
         self.time_card.set_value(f"{eng(e.time_per_div, 's')}/div")
         arrow = "\u2197" if t.slope == "rising" else "\u2198"
-        self.trig_card.title.setText(f"TRIGGER  CH{t.source + 1}  {t.mode.upper()}")
+        self.trig_card.title.setText(f"TRIG CH{t.source + 1} {t.mode.upper()}")
         self.trig_card.set_value(f"{arrow} {eng(t.level, 'V')}")
         self.rate_card.set_value(eng(e.sample_rate, "S/s"))
         self._update_cursor_readout()
@@ -606,6 +610,7 @@ class MainWindow(W.QMainWindow):
             col = STATUS_COLORS.get(self._last_status, MUTED)
             self.view.set_status(self._last_status, col, eng(self.engine.sample_rate, "S/s"))
             self.pill.setText(self._last_status)
+            self.pill.setText(self._last_status.upper())
             self.pill.setStyleSheet(f"color:{col}; border:1px solid {col};")
         if self.hyst_auto.isChecked() and abs(self.hyst_spin.value() - self.engine.hysteresis_used) > 5e-5:
             self.hyst_spin.blockSignals(True)      # show the value the search used, without re-entering _changed
@@ -631,7 +636,9 @@ class MainWindow(W.QMainWindow):
             for r, (_, key, unit) in enumerate(MEASURES):
                 val = m.get(key, float("nan"))
                 text = "--" if val != val else (f"{val * 100:.1f} %" if key == "duty" else eng(val, unit))
-                self.table.setItem(r, i, W.QTableWidgetItem(text))
+                item = W.QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                self.table.setItem(r, i, item)
 
     # ------------------------------------------------------------ file output
     def _toggle_record(self) -> None:
@@ -650,12 +657,12 @@ class MainWindow(W.QMainWindow):
             W.QMessageBox.critical(self, "Record", str(exc))
             return
         self.runner.subscribe(self.writer.put)
-        self.rec_btn.setText("Stop rec")
+        self.rec_btn.setText("STOP REC")
         _kind(self.rec_btn, "rec")
 
     def _stop_recording(self, report: bool = True) -> None:
         w, self.writer = self.writer, None
-        self.rec_btn.setText("Record")
+        self.rec_btn.setText("REC")
         _kind(self.rec_btn, "")
         if w is None:
             return
