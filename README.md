@@ -48,6 +48,19 @@ cd DAQScope
 pip install -e .[gui,hdf5]
 ```
 
+With [uv](https://docs.astral.sh/uv/) the environment and the install are one step. Run this
+inside the cloned folder, it creates `.venv` there:
+
+```
+git clone https://github.com/curlh/DAQScope.git
+cd DAQScope
+uv sync --extra gui --extra hdf5
+uv run python -m daqscope
+```
+
+Add `--extra ni` to the sync command for NI hardware, or `--extra dev` to run the tests with
+`uv run pytest`.
+
 Optional extras: `gui` (PySide6, pyqtgraph), `hdf5` (h5py), `ni` (nidaqmx), `dev` (pytest).
 
 For NI hardware, install the NI-DAQmx driver from National Instruments first, then
