@@ -12,7 +12,7 @@ from .qt import Qt, Signal, pg
 
 HX, HY = DIVS_X / 2, DIVS_Y / 2
 
-COLORS = ["#ffd700", "#00e5ff", "#ff4df0", "#4cff4c", "#ff9933", "#ffffff", "#ff5555", "#8899ff"]
+COLORS = ["#f5c518", "#22d3ee", "#f472b6", "#4ade80", "#fb923c", "#a78bfa", "#f87171", "#60a5fa"]
 
 
 @dataclass
@@ -27,7 +27,7 @@ class ScopeView(pg.PlotWidget):
     cursorsMoved = Signal()
 
     def __init__(self, parent=None):
-        super().__init__(parent, background="k")
+        super().__init__(parent, background="#05070b", antialias=True)
         self.setMenuEnabled(False)
         self.hideAxis("left")
         self.hideAxis("bottom")
@@ -41,6 +41,7 @@ class ScopeView(pg.PlotWidget):
         self._frame: Optional[ScopeFrame] = None
         self._tdiv = 1e-3
         self._traces: List[pg.PlotCurveItem] = []
+        self._glows: List[pg.PlotCurveItem] = []
         self._block = False
         self._draw_graticule()
 
@@ -70,10 +71,14 @@ class ScopeView(pg.PlotWidget):
             ln.sigPositionChanged.connect(lambda *_: self.cursorsMoved.emit())
             self.addItem(ln)
 
-        self.status = pg.TextItem("", color=(200, 200, 200), anchor=(0, 0))
-        self.status.setPos(-HX + 0.1, HY - 0.05)
+        self.status = pg.TextItem("", anchor=(0, 0))
+        self.status.setPos(-HX + 0.12, HY - 0.08)
         self.status.setZValue(6)
         self.addItem(self.status)
+        self.rate_label = pg.TextItem("", anchor=(1, 0))
+        self.rate_label.setPos(HX - 0.12, HY - 0.08)
+        self.rate_label.setZValue(6)
+        self.addItem(self.rate_label)
 
     def _draw_graticule(self) -> None:
         xs, ys = [], []
@@ -83,7 +88,7 @@ class ScopeView(pg.PlotWidget):
         for y in range(-int(HY), int(HY) + 1):
             xs += [-HX, HX]
             ys += [y, y]
-        grid = pg.PlotCurveItem(xs, ys, connect="pairs", pen=pg.mkPen((60, 60, 60), width=1))
+        grid = pg.PlotCurveItem(xs, ys, connect="pairs", pen=pg.mkPen((34, 42, 58), width=1))
         grid.setZValue(0)
         self.addItem(grid)
         tx, ty = [], []
@@ -95,22 +100,29 @@ class ScopeView(pg.PlotWidget):
             y = i / 5
             tx += [-0.08, 0.08]
             ty += [y, y]
-        ticks = pg.PlotCurveItem(tx, ty, connect="pairs", pen=pg.mkPen((140, 140, 140), width=1))
+        ticks = pg.PlotCurveItem(tx, ty, connect="pairs", pen=pg.mkPen((96, 108, 132), width=1))
         ticks.setZValue(1)
         self.addItem(ticks)
         axes = pg.PlotCurveItem([-HX, HX, 0, 0], [0, 0, -HY, HY], connect=np.array([1, 0, 1, 0]),
-                                pen=pg.mkPen((100, 100, 100), width=1))
+                                pen=pg.mkPen((62, 72, 94), width=1))
         axes.setZValue(1)
         self.addItem(axes)
 
     def set_channel_count(self, n: int) -> None:
-        for t in self._traces:
+        for t in self._traces + self._glows:
             self.removeItem(t)
-        self._traces = []
+        self._traces, self._glows = [], []
         for i in range(n):
-            t = pg.PlotCurveItem(pen=pg.mkPen(COLORS[i % len(COLORS)], width=1))
+            col = pg.mkColor(COLORS[i % len(COLORS)])
+            halo = pg.mkColor(col)
+            halo.setAlpha(46)
+            g = pg.PlotCurveItem(pen=pg.mkPen(halo, width=6))      # soft halo under the trace
+            g.setZValue(2)
+            t = pg.PlotCurveItem(pen=pg.mkPen(col, width=1.8))
             t.setZValue(3)
+            self.addItem(g)
             self.addItem(t)
+            self._glows.append(g)
             self._traces.append(t)
         self._frame = None
 
@@ -119,7 +131,7 @@ class ScopeView(pg.PlotWidget):
 
     def clear_frame(self) -> None:
         self._frame = None
-        for t in self._traces:
+        for t in self._traces + self._glows:
             t.setData([], [])
 
     def redraw(self, channels: List[ChannelView], tdiv: float, trigger_pos: float,
@@ -131,10 +143,13 @@ class ScopeView(pg.PlotWidget):
         for i, tr in enumerate(self._traces):
             if fr is None or i >= len(channels) or not channels[i].enabled or i >= fr.data.shape[0]:
                 tr.setData([], [])
+                self._glows[i].setData([], [])
                 continue
             v0 = fr.valid_from
             t, y = minmax_decimate(fr.time[v0:], fr.data[i, v0:], npx)
-            tr.setData(t / tdiv, y / channels[i].vdiv + channels[i].pos)
+            x, yy = t / tdiv, y / channels[i].vdiv + channels[i].pos
+            tr.setData(x, yy)
+            self._glows[i].setData(x, yy)
         xs, ys, brushes = [], [], []
         for i, ch in enumerate(channels):
             if ch.enabled:
@@ -155,6 +170,10 @@ class ScopeView(pg.PlotWidget):
     def _level_dragged(self) -> None:
         if not self._block:
             self.triggerLevelMoved.emit(float(self.level_line.value()))
+
+    def set_status(self, text: str, color: str, rate: str = "") -> None:
+        self.status.setHtml(f"<span style='color:{color}; font-size:13px; font-weight:700'>&#9679; {text}</span>")
+        self.rate_label.setHtml(f"<span style='color:#7d889c; font-size:12px'>{rate}</span>")
 
     def show_cursors(self, on: bool) -> None:
         for ln in self.cur_t + self.cur_v:
