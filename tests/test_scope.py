@@ -146,3 +146,57 @@ def test_status_stays_triggered_while_triggers_arrive():
     assert eng.update(buf, now=0.01) is not None and eng.status == "Trig'd"
     assert eng.update(buf, now=0.02) is None and eng.status == "Trig'd"
     assert eng.update(buf, now=1.0) is None and eng.status == "Ready"
+
+
+def test_slow_noisy_edge_does_not_flip_phase():
+    # 10 Hz at 50 kS/s with 10 mV noise: slope per sample is far below the noise
+    rng = np.random.default_rng(5)
+    fs = 50_000.0
+    buf = RingBuffer(1, 400_000)
+    eng = ScopeEngine(fs, 1)
+    eng.time_per_div = 2e-3
+    eng.trigger = TriggerConfig(mode="normal")      # automatic hysteresis
+    eng.run(buf)
+    done, rising = 0, 0
+    frames = 0
+    while frames < 12 and done < 300_000:
+        n = 1000
+        t = (done + np.arange(n)) / fs
+        buf.write((np.sin(2 * np.pi * 10 * t) + rng.normal(0, 0.01, n))[None, :])
+        done += n
+        fr = eng.update(buf)
+        if fr is not None:
+            frames += 1
+            mid = fr.data.shape[1] // 2
+            rising += fr.data[0, mid - 150:mid - 100].mean() < 0 < fr.data[0, mid + 100:mid + 150].mean()
+    assert frames >= 8 and rising == frames
+
+
+def test_edges_not_missed_when_many_samples_arrive_between_updates():
+    fs = 250_000.0
+    buf = RingBuffer(1, 2_000_000)
+    eng = ScopeEngine(fs, 1)
+    eng.time_per_div = 2e-4                         # 500-sample screen
+    eng.trigger = TriggerConfig(mode="normal", hysteresis=0.0)
+    eng.run(buf)
+    got, done = 0, 0
+    while done < 250_000:                           # 5000 samples per update, 10x the screen
+        n = 5000
+        t = (done + np.arange(n)) / fs
+        buf.write(np.sin(2 * np.pi * 50 * t + 0.3)[None, :])
+        done += n
+        got += eng.update(buf) is not None
+    assert got >= 45                                # one 50 Hz edge per 5000 samples
+
+
+def test_find_edges_resumes_across_pieces():
+    rng = np.random.default_rng(2)
+    x = np.sin(2 * np.pi * 10 * np.arange(60_000) / 250_000.0) + rng.normal(0, 0.01, 60_000)
+    whole = find_edges(x, 0.0, "rising", 0.06)
+    found, state, a = [], 0, 0
+    while a < x.size - 1:
+        b = min(a + 3000, x.size - 1)             # pieces share one sample
+        e, state = find_edges(x[a:b + 1], 0.0, "rising", 0.06, state, return_state=True)
+        found += list(a + e)
+        a = b
+    np.testing.assert_allclose(found, whole)

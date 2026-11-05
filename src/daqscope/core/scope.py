@@ -12,7 +12,7 @@ from typing import Optional
 import numpy as np
 
 from .buffer import RingBuffer
-from .trigger import find_edges
+from .trigger import auto_hysteresis, find_edges
 
 DIVS_X = 10
 DIVS_Y = 8
@@ -25,7 +25,7 @@ class TriggerConfig:
     level: float = 0.0           # volts
     slope: str = "rising"        # "rising" or "falling"
     mode: str = "auto"           # "auto", "normal" or "single"
-    hysteresis: float = 0.0      # volts
+    hysteresis: Optional[float] = None   # volts, None picks it from the noise on the source
 
 
 @dataclass
@@ -57,7 +57,11 @@ class ScopeEngine:
         self.trigger = TriggerConfig()
         self.running = False
         self.status = "Stop"
-        self._consumed = 0
+        self.hysteresis_used = 0.0   # hysteresis applied by the last search, volts
+        self._consumed = 0           # samples before this index belong to frames already shown
+        self._scan_from = 0          # samples before this index were already searched for an edge
+        self._carry = 0              # trigger arming state at the end of the last search
+        self._sig = None             # trigger settings the carried state belongs to
         self._wait_start = 0.0
 
     @property
@@ -69,7 +73,8 @@ class ScopeEngine:
         return buffer.capacity / 2 / self.sample_rate / DIVS_X
 
     def run(self, buffer: RingBuffer, now: Optional[float] = None) -> None:
-        self._consumed = buffer.total_written
+        self._consumed = self._scan_from = buffer.total_written
+        self._carry = 0
         self._wait_start = time.monotonic() if now is None else now
         self.running = True
         self.status = "Armed"
@@ -97,10 +102,8 @@ class ScopeEngine:
             return self._latest(buffer, span, pre)
 
         base = total - min(total, buffer.capacity)
-        lo = max(self._consumed, base + pre + 1)
+        lo = max(self._scan_from, base + pre + 1)
         hi = total - post                      # last usable trigger sample
-        # only the newest 4 screens are searched, so the display never lags behind the input
-        lo = max(lo, hi - 4 * span)
         if hi > lo:
             start = lo - 1
             origin = start - pre               # absolute index of seg[:, 0]
@@ -108,15 +111,29 @@ class ScopeEngine:
             if snap is None:
                 return None
             seg = snap[0]
-            edges = find_edges(seg[trig.source, pre:pre + (hi - start) + 1], trig.level,
-                               trig.slope, trig.hysteresis)
+            src = seg[trig.source]
+            hyst = trig.hysteresis
+            if hyst is None:
+                # With zero hysteresis, noise on a slow edge makes the trigger fire on the
+                # opposite slope too, so the picture jumped between phases from frame to frame.
+                hyst = auto_hysteresis(src[-20000:])
+            self.hysteresis_used = hyst
+            sig = (trig.source, trig.level, trig.slope, trig.hysteresis)
+            if sig != self._sig:
+                self._sig, self._carry = sig, 0
+            # The search resumes on the last sample of the previous one and keeps the arming
+            # state. Without it an edge was missed whenever the part of the slope below the
+            # hysteresis band had been seen in an earlier search (slow signal, fast timebase).
+            edges, carry = find_edges(src[pre:pre + (hi - start) + 1], trig.level, trig.slope,
+                                      hyst, self._carry, return_state=True)
             if edges.size:
+                self._carry = 0
                 pos = start + edges[-1]        # absolute fractional trigger position
                 ti = int(np.floor(pos))
                 a = ti - pre - origin
                 frame = ScopeFrame(seg[:, a:a + span].copy(), self.sample_rate, pre,
                                    pos - ti, True, False)
-                self._consumed = ti + post
+                self._consumed = self._scan_from = ti + post
                 self._wait_start = now
                 if trig.mode == "single":
                     self.stop()
@@ -124,11 +141,16 @@ class ScopeEngine:
                 else:
                     self.status = "Trig'd"
                 return frame
+            # nothing in [lo, hi]; the next search starts where this one ended, so every
+            # sample is searched once no matter how many arrive between two updates
+            self._scan_from = hi + 1
+            self._carry = carry
 
-        waited = now - self._wait_start > span / self.sample_rate + 0.1
+        waited = now - self._wait_start > span / self.sample_rate + 0.25
         if trig.mode == "auto" and waited:
             self._wait_start = now
-            self._consumed = total
+            self._consumed = self._scan_from = total
+            self._carry = 0
             self.status = "Auto"
             return self._latest(buffer, span, pre, triggered=False)
         if waited and trig.mode != "auto":
