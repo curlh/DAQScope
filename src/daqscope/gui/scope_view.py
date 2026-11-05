@@ -13,7 +13,7 @@ from .qt import Qt, Signal, pg
 HX, HY = DIVS_X / 2, DIVS_Y / 2
 
 COLORS = ["#ffd400", "#00c8ff", "#ff3fd0", "#47e04c", "#ff8a1f", "#9a7bff", "#ff4d4d", "#4da3ff"]
-AMBER = "#ffb000"
+AMBER = "#e6e6e6"          # trigger marker: neutral white, channel colours stay the only colour
 
 
 def _tag(text: str, color: str, anchor) -> pg.TextItem:
@@ -169,8 +169,8 @@ class ScopeView(pg.PlotWidget):
             self.triggerLevelMoved.emit(float(self.level_line.value()))
 
     def set_status(self, text: str, color: str, rate: str = "") -> None:
-        self.status.setHtml(f"<span style='color:{color}; font-weight:700'>{text.upper()}</span>")
-        self.rate_label.setHtml(f"<span style='color:#74747e'>{rate}</span>")
+        self.status.setHtml(f"<span style='color:{color}'>{text}</span>")
+        self.rate_label.setHtml(f"<span style='color:#9a9a9a'>{rate}</span>")
 
     def show_cursors(self, on: bool) -> None:
         for ln in self.cur_t + self.cur_v:

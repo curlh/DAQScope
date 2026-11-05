@@ -56,9 +56,9 @@ class Card(W.QFrame):
         self.setCursor(Qt.PointingHandCursor)
         self._color, self._badge = color, badge
         lay = W.QHBoxLayout(self)
-        lay.setContentsMargins(8, 4, 12, 4)
-        lay.setSpacing(8)
-        self.title = _label(title, "section")
+        lay.setContentsMargins(10, 4, 10, 4)
+        lay.setSpacing(6)
+        self.title = _label(title, "muted")
         self.value = _label("", "value")
         lay.addWidget(self.title)
         lay.addWidget(self.value)
@@ -69,12 +69,10 @@ class Card(W.QFrame):
 
     def set_dim(self, dim: bool) -> None:
         if self._badge:          # channel number in a filled box, as on the screen edge
-            bg, fg = ("#2b2b30", "#74747e") if dim else (self._color, "#000")
-            self.title.setStyleSheet(f"background:{bg}; color:{fg}; font-size:12px; font-weight:700;"
-                                     " padding: 1px 6px;")
+            self.title.setStyleSheet(f"color:{'#6a6a6a' if dim else self._color}; font-weight:bold;")
         elif self._color:
             self.title.setStyleSheet(f"color:{self._color};")
-        self.value.setStyleSheet("color:#4a4a52;" if dim else "")
+        self.value.setStyleSheet("color:#6a6a6a;" if dim else "")
 
     def mousePressEvent(self, ev) -> None:
         self.clicked.emit()
@@ -118,15 +116,14 @@ class MainWindow(W.QMainWindow):
         outer = W.QVBoxLayout(root)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-        outer.addWidget(self._header())
 
         body = W.QHBoxLayout()
-        body.setContentsMargins(10, 10, 10, 10)
-        body.setSpacing(10)
+        body.setContentsMargins(8, 8, 8, 8)
+        body.setSpacing(8)
         outer.addLayout(body, 1)
 
         left = W.QVBoxLayout()
-        left.setSpacing(10)
+        left.setSpacing(6)
         self.view = ScopeView()
         self.view.triggerLevelMoved.connect(self._level_dragged)
         self.view.cursorsMoved.connect(self._update_cursor_readout)
@@ -145,63 +142,96 @@ class MainWindow(W.QMainWindow):
         body.addLayout(left, 1)
 
         side = W.QVBoxLayout()
-        side.setSpacing(8)
-        self.tabs = W.QTabWidget()
-        self.tabs.tabBar().setUsesScrollButtons(False)
-        self.tabs.tabBar().setExpanding(True)
-        self.tabs.addTab(self._tab(self._vertical_page()), "CH")
-        self.tabs.addTab(self._tab(self._horizontal_page()), "TIME")
-        self.tabs.addTab(self._tab(self._trigger_page()), "TRIG")
-        self.tabs.addTab(self._tab(self._cursor_page()), "CURS")
-        self.tabs.addTab(self._tab(self._acq_page()), "SETUP")
-        side.addWidget(self.tabs, 5)
-        side.addWidget(_label("MEASUREMENTS", "section"))
+        side.setSpacing(4)
+        groups = W.QWidget()
+        gl = W.QVBoxLayout(groups)
+        gl.setContentsMargins(0, 0, 4, 0)
+        gl.setSpacing(2)
+        for title, build in (("Channels", self._vertical_page), ("Timebase", self._horizontal_page),
+                             ("Trigger", self._trigger_page), ("Cursors", self._cursor_page),
+                             ("Acquisition", self._acq_page)):
+            box = W.QGroupBox(title)
+            lay = W.QVBoxLayout(box)
+            lay.setContentsMargins(4, 4, 4, 4)
+            lay.addWidget(build())
+            gl.addWidget(box)
+        gl.addStretch(1)
+        scroll = W.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(groups)
+        scroll.setFrameShape(W.QFrame.NoFrame)
+        side.addWidget(scroll, 5)
+        box = W.QGroupBox("Measurements")
+        ml = W.QVBoxLayout(box)
+        ml.setContentsMargins(4, 4, 4, 4)
         self.table = W.QTableWidget(len(MEASURES), 0)
         self.table.setVerticalHeaderLabels([m[0] for m in MEASURES])
         self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(W.QAbstractItemView.NoSelection)
         self.table.setFocusPolicy(Qt.NoFocus)
-        self.table.verticalHeader().setDefaultSectionSize(22)
+        self.table.verticalHeader().setDefaultSectionSize(21)
         self.table.horizontalHeader().setSectionResizeMode(W.QHeaderView.Stretch)
-        side.addWidget(self.table, 4)
+        ml.addWidget(self.table)
+        side.addWidget(box, 3)
         sw = W.QWidget()
         sw.setLayout(side)
         sw.setFixedWidth(400)
         body.addWidget(sw)
         self.statusBar().showMessage("")
+        self._toolbar()
+        self._menus()
 
-    def _header(self) -> W.QFrame:
-        bar = W.QFrame()
-        bar.setObjectName("header")
-        h = W.QHBoxLayout(bar)
-        h.setContentsMargins(14, 8, 10, 8)
-        h.setSpacing(10)
-        brand = W.QLabel("DAQSCOPE")
-        brand.setObjectName("brand")
-        self.device_label = W.QLabel("")
-        self.device_label.setObjectName("device")
-        self.pill = W.QLabel("Stop")
-        self.pill.setObjectName("pill")
-        h.addWidget(brand)
-        h.addSpacing(6)
-        h.addWidget(self.device_label)
-        h.addSpacing(10)
-        h.addWidget(self.pill)
-        h.addStretch(1)
-        self.run_btn = W.QPushButton("RUN")
+    def _toolbar(self) -> None:
+        tb = self.addToolBar("Main")
+        tb.setMovable(False)
+        tb.setFloatable(False)
+        self.run_btn = W.QPushButton("Run")
         self.run_btn.clicked.connect(self._toggle_run)
-        self.single_btn = W.QPushButton("SINGLE")
+        self.single_btn = W.QPushButton("Single")
         self.single_btn.clicked.connect(self._single)
-        self.auto_btn = W.QPushButton("AUTOSET")
+        self.auto_btn = W.QPushButton("Autoset")
         self.auto_btn.clicked.connect(self._autoset)
-        _kind(self.auto_btn, "accent")
-        self.rec_btn = W.QPushButton("REC")
+        self.rec_btn = W.QPushButton("Record")
         self.rec_btn.clicked.connect(self._toggle_record)
-        self.save_btn = W.QPushButton("SAVE")
+        self.save_btn = W.QPushButton("Save frame")
         self.save_btn.clicked.connect(self._save_frame)
-        for b in (self.run_btn, self.single_btn, self.auto_btn, self.rec_btn, self.save_btn):
-            h.addWidget(b)
-        return bar
+        for b in (self.run_btn, self.single_btn, self.auto_btn):
+            tb.addWidget(b)
+        tb.addSeparator()
+        for b in (self.rec_btn, self.save_btn):
+            tb.addWidget(b)
+        self.pill = W.QLabel("Stop")
+        self.device_label = W.QLabel("")
+        self.device_label.setProperty("role", "muted")
+        self.statusBar().addPermanentWidget(self.device_label)
+        self.statusBar().addPermanentWidget(self.pill)
+
+    def _menus(self) -> None:
+        def act(text, slot, shortcut=None, checkable=False):
+            a = QtGui.QAction(text, self)
+            a.setCheckable(checkable)
+            if shortcut:
+                a.setShortcut(shortcut)
+            (a.toggled if checkable else a.triggered).connect(slot)
+            return a
+        mb = self.menuBar()
+        m = mb.addMenu("&File")
+        m.addAction(act("Record...", self._toggle_record, "Ctrl+R"))
+        m.addAction(act("Save frame...", self._save_frame, "Ctrl+S"))
+        m.addSeparator()
+        m.addAction(act("Quit", self.close, "Ctrl+Q"))
+        m = mb.addMenu("&Acquire")
+        m.addAction(act("Run / Stop", self._toggle_run, "F5"))
+        m.addAction(act("Single", self._single, "F6"))
+        m.addAction(act("Autoset", self._autoset, "F7"))
+        m = mb.addMenu("&View")
+        self.cur_action = act("Cursors", self.cur_chk.setChecked, "F8", checkable=True)
+        self.cur_chk.toggled.connect(self.cur_action.setChecked)
+        m.addAction(self.cur_action)
+        m = mb.addMenu("&Help")
+        m.addAction(act("About", lambda: W.QMessageBox.about(
+            self, "About DAQScope", "DAQScope\nOscilloscope front end for DAQ devices.\n"
+            "Not affiliated with National Instruments.")))
 
     @staticmethod
     def _tab(page: W.QWidget) -> W.QScrollArea:
@@ -214,14 +244,14 @@ class MainWindow(W.QMainWindow):
     @staticmethod
     def _page(layout) -> W.QWidget:
         w = W.QWidget()
-        layout.setContentsMargins(4, 12, 8, 8)
-        layout.setSpacing(10)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(5)
         w.setLayout(layout)
         return w
 
     def _acq_page(self):
         f = W.QFormLayout()
-        f.setVerticalSpacing(10)
+        f.setVerticalSpacing(5)
         self.backend_box = W.QComboBox()
         self.backend_box.activated.connect(self._backend_changed)
         self.device_box = W.QComboBox()
@@ -230,38 +260,38 @@ class MainWindow(W.QMainWindow):
         self.chan_list.setMaximumHeight(130)
         self.chan_list.itemChanged.connect(lambda *_: self._fill_rates())
         self.rate_box = W.QComboBox()
-        self.apply_btn = W.QPushButton("APPLY")
+        self.apply_btn = W.QPushButton("Apply")
         _kind(self.apply_btn, "accent")
         self.apply_btn.clicked.connect(self.apply_acquisition)
-        f.addRow("BACKEND", self.backend_box)
-        f.addRow("DEVICE", self.device_box)
-        f.addRow("INPUTS", self.chan_list)
-        f.addRow("SAMPLE RATE", self.rate_box)
+        f.addRow("Backend", self.backend_box)
+        f.addRow("Device", self.device_box)
+        f.addRow("Inputs", self.chan_list)
+        f.addRow("Sample rate", self.rate_box)
         f.addRow(self.apply_btn)
         page = self._page(f)
         return page
 
     def _vertical_page(self):
         self.vgrid = W.QGridLayout()
-        self.vgrid.setVerticalSpacing(10)
+        self.vgrid.setVerticalSpacing(4)
         self.vgrid.setHorizontalSpacing(8)
         return self._page(self.vgrid)
 
     def _horizontal_page(self):
         f = W.QFormLayout()
-        f.setVerticalSpacing(10)
+        f.setVerticalSpacing(5)
         self.tdiv_box = W.QComboBox()
         self.tdiv_box.activated.connect(self._changed)
         self.tpos_spin = _spin(0, 100, 5, 0, " %")
         self.tpos_spin.setValue(50)
         self.tpos_spin.valueChanged.connect(self._changed)
-        f.addRow("TIME/DIV", self.tdiv_box)
-        f.addRow("TRIGGER POSITION", self.tpos_spin)
+        f.addRow("Time/div", self.tdiv_box)
+        f.addRow("Trigger position", self.tpos_spin)
         return self._page(f)
 
     def _trigger_page(self):
         f = W.QFormLayout()
-        f.setVerticalSpacing(10)
+        f.setVerticalSpacing(5)
         self.src_box = W.QComboBox()
         self.src_box.activated.connect(self._changed)
         self.slope_box = W.QComboBox()
@@ -280,17 +310,17 @@ class MainWindow(W.QMainWindow):
         hyst_row = W.QHBoxLayout()
         hyst_row.addWidget(self.hyst_spin, 1)
         hyst_row.addWidget(self.hyst_auto)
-        f.addRow("SOURCE", self.src_box)
-        f.addRow("SLOPE", self.slope_box)
-        f.addRow("MODE", self.mode_box)
-        f.addRow("LEVEL", self.level_spin)
-        f.addRow("HYSTERESIS", hyst_row)
+        f.addRow("Source", self.src_box)
+        f.addRow("Slope", self.slope_box)
+        f.addRow("Mode", self.mode_box)
+        f.addRow("Level", self.level_spin)
+        f.addRow("Hysteresis", hyst_row)
         return self._page(f)
 
     def _cursor_page(self):
         v = W.QVBoxLayout()
         row = W.QHBoxLayout()
-        self.cur_chk = W.QCheckBox("CURSORS")
+        self.cur_chk = W.QCheckBox("Show cursors")
         self.cur_chk.toggled.connect(self._cursors_toggled)
         self.cur_src = W.QComboBox()
         self.cur_src.activated.connect(self._update_cursor_readout)
@@ -405,7 +435,7 @@ class MainWindow(W.QMainWindow):
         self._changed()
         dev = self.device_box.currentData()
         self.device_label.setText(f"{dev.name} {dev.product_type}".strip() if dev else self.backend.name)
-        self.statusBar().showMessage(f"{self.backend.name}  {n}ch  {eng(fs, 'S/s')}/ch")
+        self.statusBar().showMessage(f"{self.backend.name}, {n} channels, {eng(fs, 'S/s')} per channel")
 
     def _build_channel_rows(self) -> None:
         while self.vgrid.count():
@@ -413,8 +443,8 @@ class MainWindow(W.QMainWindow):
             if w is not None:
                 w.deleteLater()
         self._rows = []
-        for j, text in enumerate(("CHANNEL", "SCALE", "POSITION")):
-            self.vgrid.addWidget(_label(text, "section"), 0, j)
+        for j, text in enumerate(("Channel", "Scale", "Position")):
+            self.vgrid.addWidget(_label(text, "muted"), 0, j)
         for i, nm in enumerate(self.names):
             chk = W.QCheckBox(f"CH{i + 1}")
             chk.setChecked(self.channels[i].enabled)
@@ -445,17 +475,17 @@ class MainWindow(W.QMainWindow):
                 w.deleteLater()
         self.ch_cards = []
         for i in range(len(self.names)):
-            c = Card(str(i + 1), COLORS[i % len(COLORS)], badge=True)
+            c = Card(f"CH{i + 1}", COLORS[i % len(COLORS)], badge=True)
             c.clicked.connect(lambda i=i: self._rows[i][0].toggle())
             c.wheel.connect(lambda d, i=i: self._step_combo(self._rows[i][1], -d))
             self.cards_row.addWidget(c)
             self.ch_cards.append(c)
         self.cards_row.addStretch(1)
-        self.time_card = Card("TIME")
+        self.time_card = Card("Time")
         self.time_card.wheel.connect(lambda d: self._step_combo(self.tdiv_box, -d))
-        self.trig_card = Card("TRIG", "#ffb000")
+        self.trig_card = Card("Trigger")
         self.trig_card.wheel.connect(self._wheel_level)
-        self.rate_card = Card("RATE")
+        self.rate_card = Card("Rate")
         for c in (self.time_card, self.trig_card, self.rate_card):
             self.cards_row.addWidget(c)
 
@@ -510,7 +540,7 @@ class MainWindow(W.QMainWindow):
         t = e.trigger
         self.time_card.set_value(f"{eng(e.time_per_div, 's')}/div")
         arrow = "\u2197" if t.slope == "rising" else "\u2198"
-        self.trig_card.title.setText(f"TRIG CH{t.source + 1} {t.mode.upper()}")
+        self.trig_card.title.setText(f"Trigger CH{t.source + 1} {t.mode}")
         self.trig_card.set_value(f"{arrow} {eng(t.level, 'V')}")
         self.rate_card.set_value(eng(e.sample_rate, "S/s"))
         self._update_cursor_readout()
@@ -610,8 +640,7 @@ class MainWindow(W.QMainWindow):
             col = STATUS_COLORS.get(self._last_status, MUTED)
             self.view.set_status(self._last_status, col, eng(self.engine.sample_rate, "S/s"))
             self.pill.setText(self._last_status)
-            self.pill.setText(self._last_status.upper())
-            self.pill.setStyleSheet(f"color:{col}; border:1px solid {col};")
+            self.pill.setStyleSheet(f"color:{col};")
         if self.hyst_auto.isChecked() and abs(self.hyst_spin.value() - self.engine.hysteresis_used) > 5e-5:
             self.hyst_spin.blockSignals(True)      # show the value the search used, without re-entering _changed
             self.hyst_spin.setValue(self.engine.hysteresis_used)
@@ -619,7 +648,7 @@ class MainWindow(W.QMainWindow):
         run = self.engine.running
         want = "run" if run else "stop"
         if self.run_btn.property("kind") != want:
-            self.run_btn.setText("RUN" if run else "STOP")
+            self.run_btn.setText("Run" if run else "Stop")
             _kind(self.run_btn, want)
 
     def _refresh_trace_only(self) -> None:
@@ -657,12 +686,12 @@ class MainWindow(W.QMainWindow):
             W.QMessageBox.critical(self, "Record", str(exc))
             return
         self.runner.subscribe(self.writer.put)
-        self.rec_btn.setText("STOP REC")
+        self.rec_btn.setText("Stop recording")
         _kind(self.rec_btn, "rec")
 
     def _stop_recording(self, report: bool = True) -> None:
         w, self.writer = self.writer, None
-        self.rec_btn.setText("REC")
+        self.rec_btn.setText("Record")
         _kind(self.rec_btn, "")
         if w is None:
             return

@@ -3,70 +3,39 @@ from __future__ import annotations
 
 from .qt import QtGui, QtWidgets
 
-BG = "#0b0b0c"
-PANEL = "#111113"
-PANEL2 = "#0e0e10"
-BORDER = "#2b2b30"
-BORDER2 = "#3d3d46"
-TEXT = "#cfcfd4"
-MUTED = "#74747e"
-ACCENT = "#ffb000"          # the one accent: amber, as on a lab instrument display
-GOOD = "#37d67a"
-WARN = "#ffb000"
-BAD = "#ff4d4d"
-MONO = '"JetBrains Mono","Cascadia Mono","Consolas","DejaVu Sans Mono","Liberation Mono",monospace'
+BG = "#2b2b2b"
+PANEL = "#313335"
+PANEL2 = "#2b2b2b"
+FIELD = "#3c3f41"
+BORDER = "#4a4d50"
+BORDER2 = "#5a5d60"
+TEXT = "#d4d4d4"
+MUTED = "#9a9a9a"
+SELECT = "#4b6eaf"          # selection and focus only, not a brand colour
+GOOD = "#7fbf7f"
+WARN = "#d6b05a"
+BAD = "#e07a7a"
+MONO = '"DejaVu Sans Mono","Consolas","Liberation Mono",monospace'
 
 STATUS_COLORS = {"Trig'd": GOOD, "Auto": WARN, "Roll": TEXT, "Armed": TEXT, "Ready": TEXT,
                  "Stop": BAD}
 
 QSS = f"""
-* {{ font-family: {MONO}; font-size: 12px; color: {TEXT}; }}
-QMainWindow, QWidget#root {{ background: {BG}; }}
-QFrame#header {{ background: {PANEL2}; border-bottom: 1px solid {BORDER}; }}
-QLabel#brand {{ color: {ACCENT}; font-size: 14px; font-weight: 700; letter-spacing: 3px; }}
-QLabel#device {{ color: {MUTED}; }}
-QLabel#pill {{ padding: 3px 10px; font-weight: 700; border: 1px solid {BORDER2}; }}
-QPushButton {{ background: {PANEL}; border: 1px solid {BORDER2}; padding: 5px 13px; }}
-QPushButton:hover {{ border-color: {ACCENT}; }}
-QPushButton:pressed {{ background: {ACCENT}; color: #000; }}
-QPushButton:disabled {{ color: {MUTED}; }}
-QPushButton[kind="run"] {{ background: #2fbf6a; border-color: #2fbf6a; color: #000; font-weight: 700; min-width: 64px; }}
-QPushButton[kind="stop"] {{ background: #e0453f; border-color: #e0453f; color: #000; font-weight: 700; min-width: 64px; }}
-QPushButton[kind="accent"] {{ color: {ACCENT}; border-color: {ACCENT}; font-weight: 700; }}
-QPushButton[kind="accent"]:hover {{ background: #2a2200; }}
-QPushButton[kind="rec"] {{ background: #7a1c1c; border-color: {BAD}; color: #fff; font-weight: 700; }}
-QComboBox, QDoubleSpinBox, QSpinBox, QLineEdit {{
-    background: {BG}; border: 1px solid {BORDER2}; padding: 3px 6px; min-height: 20px;
-    selection-background-color: {ACCENT}; selection-color: #000; }}
-QComboBox:hover, QDoubleSpinBox:hover {{ border-color: #5a5a66; }}
-QComboBox:focus, QDoubleSpinBox:focus {{ border-color: {ACCENT}; }}
-QComboBox QAbstractItemView {{ background: {PANEL}; border: 1px solid {BORDER2}; selection-background-color: {ACCENT}; selection-color: #000; outline: 0; }}
-QTabWidget::pane {{ border: none; border-top: 1px solid {BORDER}; }}
-QTabBar::tab {{ background: {PANEL2}; color: {MUTED}; padding: 6px 8px; border: 1px solid {BORDER}; border-bottom: none; margin-right: -1px; }}
-QTabBar::tab:selected {{ background: {PANEL}; color: {ACCENT}; border-top: 2px solid {ACCENT}; }}
-QTabBar::tab:hover {{ color: {TEXT}; }}
-QCheckBox {{ spacing: 8px; }}
-QCheckBox::indicator {{ width: 12px; height: 12px; border: 1px solid #5a5a66; background: {BG}; }}
-QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
-QListWidget {{ background: {BG}; border: 1px solid {BORDER2}; padding: 2px; }}
-QListWidget::item {{ padding: 2px 4px; }}
-QTableWidget {{ background: {BG}; border: 1px solid {BORDER}; gridline-color: #1e1e22; font-size: 11px; }}
-QHeaderView::section {{ background: {PANEL}; color: {MUTED}; border: none; border-right: 1px solid #1e1e22; border-bottom: 1px solid {BORDER}; padding: 4px; font-weight: 700; }}
-QTableWidget::item {{ padding: 0 3px; }}
-QFrame#bar {{ background: {PANEL2}; border: 1px solid {BORDER}; }}
-QFrame#seg {{ background: transparent; border: none; border-right: 1px solid {BORDER}; }}
-QFrame#seg:hover {{ background: #18181c; }}
+QGroupBox {{ border: 1px solid {BORDER}; margin-top: 11px; padding: 10px 6px 6px 6px; }}
+QGroupBox::title {{ subcontrol-origin: margin; left: 9px; padding: 0 4px; color: {MUTED}; }}
+QPushButton[kind="run"] {{ color: {GOOD}; font-weight: bold; }}
+QPushButton[kind="stop"] {{ color: {BAD}; font-weight: bold; }}
+QPushButton[kind="rec"] {{ color: {BAD}; font-weight: bold; }}
+QFrame#bar {{ border: none; border-top: 1px solid {BORDER}; }}
+QFrame#seg {{ border: none; border-right: 1px solid {BORDER}; }}
+QFrame#seg:hover {{ background: #35383a; }}
 QFrame#screenFrame {{ background: #000; border: 1px solid {BORDER2}; }}
 QLabel[role="muted"] {{ color: {MUTED}; }}
-QLabel[role="section"] {{ color: {MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 1px; }}
-QLabel[role="value"] {{ font-size: 13px; font-weight: 700; }}
-QLabel[role="mono"] {{ }}
-QScrollArea {{ border: none; background: transparent; }}
-QScrollBar:vertical {{ background: transparent; width: 8px; margin: 0; }}
-QScrollBar::handle:vertical {{ background: {BORDER2}; min-height: 30px; }}
-QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
-QStatusBar {{ background: {PANEL2}; color: {MUTED}; border-top: 1px solid {BORDER}; }}
-QToolTip {{ background: {PANEL}; color: {TEXT}; border: 1px solid {BORDER2}; }}
+QLabel[role="value"] {{ font-family: {MONO}; }}
+QLabel[role="mono"] {{ font-family: {MONO}; }}
+QTableWidget {{ gridline-color: {BORDER}; font-family: {MONO}; font-size: 11px; }}
+QHeaderView::section {{ background: {PANEL}; color: {MUTED}; border: none; border-right: 1px solid {BORDER}; border-bottom: 1px solid {BORDER}; padding: 3px; }}
+QTabBar::tab {{ padding: 4px 10px; }}
 """
 
 
@@ -74,10 +43,12 @@ def apply_theme(app: QtWidgets.QApplication) -> None:
     app.setStyle("Fusion")
     pal = QtGui.QPalette()
     for role, col in [(QtGui.QPalette.Window, BG), (QtGui.QPalette.WindowText, TEXT),
-                      (QtGui.QPalette.Base, PANEL), (QtGui.QPalette.AlternateBase, PANEL2),
+                      (QtGui.QPalette.Base, FIELD), (QtGui.QPalette.AlternateBase, PANEL2),
                       (QtGui.QPalette.Text, TEXT), (QtGui.QPalette.Button, PANEL),
-                      (QtGui.QPalette.ButtonText, TEXT), (QtGui.QPalette.Highlight, ACCENT),
-                      (QtGui.QPalette.HighlightedText, "#000000")]:
+                      (QtGui.QPalette.ButtonText, TEXT), (QtGui.QPalette.Highlight, SELECT),
+                      (QtGui.QPalette.HighlightedText, "#ffffff"),
+                      (QtGui.QPalette.ToolTipBase, PANEL), (QtGui.QPalette.ToolTipText, TEXT),
+                      (QtGui.QPalette.PlaceholderText, MUTED)]:
         pal.setColor(role, QtGui.QColor(col))
     app.setPalette(pal)
     app.setStyleSheet(QSS)
