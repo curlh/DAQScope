@@ -157,6 +157,18 @@ class ScopeEngine:
             self.status = "Ready"          # armed, no trigger for longer than one screen
         return None
 
+    def force(self, buffer: RingBuffer) -> Optional[ScopeFrame]:
+        """Force trigger: show the newest screen now, without waiting for an edge."""
+        if not self.running or buffer.total_written == 0:
+            return None
+        span = self.span
+        if span > buffer.capacity // 2:
+            return None
+        frame = self._latest(buffer, span, int(round(span * self.trigger_pos)), triggered=False)
+        self._consumed = self._scan_from = buffer.total_written
+        self._carry = 0
+        return frame
+
     def _latest(self, buffer: RingBuffer, span: int, pre: int, triggered: bool = False) -> ScopeFrame:
         data = buffer.latest(span)
         if data.shape[1] < span:

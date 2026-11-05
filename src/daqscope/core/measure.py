@@ -24,10 +24,14 @@ def measure(y: np.ndarray, sample_rate: float) -> Dict[str, float]:
     mid = vmin + 0.5 * span
     hyst = 0.4 * span
     rise = find_edges(y, mid, "rising", hyst)
-    if rise.size >= 2:
-        period = float(np.mean(np.diff(rise))) / sample_rate
+    fall = find_edges(y, mid, "falling", hyst)
+    # Two cycles with the edges on the record border leave only one rising edge inside it, so
+    # fall back to the falling edges for the period. Duty cycle still needs two rising edges.
+    edges = rise if rise.size >= 2 else fall
+    if edges.size >= 2:
+        period = float(np.mean(np.diff(edges))) / sample_rate
         out["period"], out["freq"] = period, 1.0 / period
-        fall = find_edges(y, mid, "falling", hyst)
+    if rise.size >= 2:
         widths = []
         for a, b in zip(rise[:-1], rise[1:]):
             f = fall[(fall > a) & (fall < b)]

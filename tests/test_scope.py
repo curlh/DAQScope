@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from daqscope.core import (RingBuffer, ScopeEngine, TriggerConfig, find_edges, measure,
+from daqscope.core import (FrameAverager, RingBuffer, ScopeFrame, ScopeEngine, TriggerConfig, find_edges, measure,
                            minmax_decimate)
 
 FS = 10_000.0
@@ -200,3 +200,34 @@ def test_find_edges_resumes_across_pieces():
         found += list(a + e)
         a = b
     np.testing.assert_allclose(found, whole)
+
+
+def test_measure_frequency_with_one_rising_edge():
+    # exactly two cycles, starting and ending on the rising crossing: one rising edge is inside
+    n = 20_000
+    y = np.sin(2 * np.pi * 10 * (np.arange(n) + 0.5) / FS)[: n - 1]     # 10 Hz, 0.2 s window
+    assert measure(y, FS)["freq"] == pytest.approx(10.0, rel=1e-3)
+
+
+def test_averager_reduces_noise_and_keeps_trigger_aligned():
+    rng = np.random.default_rng(7)
+    pre, span, sigma, n = 500, 1000, 0.01, 16
+    avg = FrameAverager(n)
+    f = lambda t: np.sin(2 * np.pi * 100 * t)          # 100 Hz, the trigger sits at t = 0
+    out = None
+    for _ in range(40):
+        frac = rng.uniform(0, 1)                       # sub-sample trigger offset of this frame
+        t = (np.arange(span) - pre - frac) / FS
+        fr = ScopeFrame((f(t) + rng.normal(0, sigma, span))[None, :], FS, pre, frac, True, False)
+        out = avg.add(fr)
+    t0 = (np.arange(span) - pre) / FS
+    resid = out.data[0] - f(t0)
+    assert resid.std() == pytest.approx(sigma / np.sqrt(n), rel=0.2)
+    assert out.frac == 0.0 and out.data.shape == (1, span)
+
+
+def test_averager_passes_through_untriggered_frames():
+    avg = FrameAverager(8)
+    fr = ScopeFrame(np.zeros((1, 50)), FS, 25, 0.0, False, False)
+    assert avg.add(fr) is fr
+    assert FrameAverager(1).add(ScopeFrame(np.zeros((1, 50)), FS, 25, 0.3, True, False)).frac == 0.3

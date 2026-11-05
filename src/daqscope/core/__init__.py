@@ -1,3 +1,4 @@
+from .average import FrameAverager
 from .buffer import RingBuffer
 from .config import (AIChannel, AIConfig, AOChannel, AOConfig, CounterConfig,
                      DeviceInfo, DIOConfig, Scale)
@@ -11,7 +12,7 @@ from .trigger import find_edges
 from .waveforms import one_period
 
 __all__ = [
-    "RingBuffer", "AIChannel", "AIConfig", "AOChannel", "AOConfig", "CounterConfig",
+    "FrameAverager", "RingBuffer", "AIChannel", "AIConfig", "AOChannel", "AOConfig", "CounterConfig",
     "DeviceInfo", "DIOConfig", "Scale", "BackendError", "ConfigError", "DAQScopeError",
     "apply_scales", "AcquisitionSession", "StreamRunner", "one_period", "minmax_decimate", "measure", "DIVS_X", "DIVS_Y", "ScopeEngine",
     "ScopeFrame", "TriggerConfig", "find_edges",
