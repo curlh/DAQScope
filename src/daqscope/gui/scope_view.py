@@ -27,11 +27,13 @@ class ChannelView:
     enabled: bool = True
     vdiv: float = 1.0
     pos: float = 0.0             # vertical position in divisions
+    invert: bool = False
 
 
 class ScopeView(pg.PlotWidget):
     triggerLevelMoved = Signal(float)     # screen divisions
     cursorsMoved = Signal()
+    wheelStepped = Signal(int)            # +1 wheel up, -1 wheel down
 
     def __init__(self, parent=None):
         super().__init__(parent, background="#000000", antialias=True)
@@ -149,7 +151,8 @@ class ScopeView(pg.PlotWidget):
                 continue
             v0 = fr.valid_from
             t, y = minmax_decimate(fr.time[v0:], fr.data[i, v0:], npx)
-            tr.setData(t / tdiv, y / channels[i].vdiv + channels[i].pos)
+            sign = -1.0 if channels[i].invert else 1.0
+            tr.setData(t / tdiv, sign * y / channels[i].vdiv + channels[i].pos)
         for i, tag in enumerate(self._tags):
             on = i < len(channels) and channels[i].enabled
             tag.setVisible(on)
@@ -163,6 +166,10 @@ class ScopeView(pg.PlotWidget):
             self._block = True
             self.level_line.setValue(ydiv)
             self._block = False
+
+    def wheelEvent(self, ev) -> None:
+        self.wheelStepped.emit(1 if ev.angleDelta().y() > 0 else -1)
+        ev.accept()
 
     def _level_dragged(self) -> None:
         if not self._block:

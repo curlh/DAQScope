@@ -29,6 +29,7 @@ QPushButton[kind="rec"] {{ color: {BAD}; font-weight: bold; }}
 QFrame#bar {{ border: none; border-top: 1px solid {BORDER}; }}
 QFrame#seg {{ border: none; border-right: 1px solid {BORDER}; }}
 QFrame#seg:hover {{ background: #35383a; }}
+QFrame#seg[selected="true"] {{ background: #3d4044; }}
 QFrame#screenFrame {{ background: #000; border: 1px solid {BORDER2}; }}
 QLabel[role="muted"] {{ color: {MUTED}; }}
 QLabel[role="value"] {{ font-family: {MONO}; }}

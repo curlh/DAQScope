@@ -1,14 +1,19 @@
-"""Oscilloscope main window: screen, front-panel controls, measurements and recording."""
+"""Oscilloscope main window.
+
+Layout follows a bench scope. The screen is on the left with the horizontal controls and the
+channel selector underneath. The panel on the right shows only the menu of the selected channel,
+the trigger, and the cursor and measurement readouts once they are switched on.
+"""
 from __future__ import annotations
 
 import time
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
 
 from ..backends import available_backends, get_backend
-from ..core import (AcquisitionSession, AIChannel, AIConfig, ScopeEngine, StreamRunner,
-                    TriggerConfig, measure)
+from ..core import (AcquisitionSession, AIChannel, AIConfig, FrameAverager, ScopeEngine,
+                    ScopeFrame, StreamRunner, TriggerConfig, measure)
 from ..core.scope import DIVS_X
 from ..io import open_writer
 from .qt import QtCore, QtGui, QtWidgets, QTimer, Qt
@@ -19,7 +24,10 @@ from .units import ceil_125, eng, steps_125
 W = QtWidgets
 RATES = [1e3, 2e3, 5e3, 1e4, 2e4, 5e4, 1e5, 2e5, 2.5e5]
 MEASURES = [("Vpp", "pp", "V"), ("Max", "max", "V"), ("Min", "min", "V"), ("Mean", "mean", "V"),
-            ("RMS", "rms", "V"), ("Freq", "freq", "Hz"), ("Period", "period", "s"), ("Duty", "duty", "")]
+            ("RMS", "rms", "V"), ("Frequency", "freq", "Hz"), ("Period", "period", "s"),
+            ("Duty cycle", "duty", "")]
+AVERAGES = (4, 16, 64)
+VDIV_STEPS = steps_125(1e-3, 5.0)
 BUFFER_SECONDS = 20.0
 BUFFER_MAX_SAMPLES = 16_000_000      # total float64 values, about 128 MB
 
@@ -40,21 +48,25 @@ def _label(text, role="muted"):
     return lab
 
 
-def _kind(btn, kind):
-    btn.setProperty("kind", kind)
-    repolish(btn)
+def _prop(widget, name, value):
+    widget.setProperty(name, value)
+    repolish(widget)
+
+
+def _default_pos(i: int, n: int) -> float:
+    return ((n - 1) / 2 - i) * 1.6
 
 
 class Card(W.QFrame):
-    """One segment of the readout bar. Click toggles it, the wheel steps its setting."""
+    """A channel tile. Click selects the channel, the wheel steps its V/div."""
     clicked = QtCore.Signal()
     wheel = QtCore.Signal(int)
 
-    def __init__(self, title: str, color: Optional[str] = None, badge: bool = False):
+    def __init__(self, title: str, color: str):
         super().__init__()
         self.setObjectName("seg")
         self.setCursor(Qt.PointingHandCursor)
-        self._color, self._badge = color, badge
+        self._color = color
         lay = W.QHBoxLayout(self)
         lay.setContentsMargins(10, 4, 10, 4)
         lay.setSpacing(6)
@@ -68,10 +80,7 @@ class Card(W.QFrame):
         self.value.setText(text)
 
     def set_dim(self, dim: bool) -> None:
-        if self._badge:          # channel number in a filled box, as on the screen edge
-            self.title.setStyleSheet(f"color:{'#6a6a6a' if dim else self._color}; font-weight:bold;")
-        elif self._color:
-            self.title.setStyleSheet(f"color:{self._color};")
+        self.title.setStyleSheet(f"color:{'#6a6a6a' if dim else self._color}; font-weight:bold;")
         self.value.setStyleSheet("color:#6a6a6a;" if dim else "")
 
     def mousePressEvent(self, ev) -> None:
@@ -94,13 +103,19 @@ class MainWindow(W.QMainWindow):
         self.writer = None
         self.names: List[str] = []
         self.channels: List[ChannelView] = []
-        self._saved = {}                 # per channel name: (vdiv, pos), kept across re-applies
-        self._rows = []
-        self._frame = None
+        self.sel = 0                                  # channel shown in the channel menu
+        self.meas: List[Tuple[int, str]] = []         # measurements added by the user (source, key)
+        self.acq: Tuple[str, int] = ("normal", 1)     # acquire mode and its average count
+        self.averager = FrameAverager()
+        self._sig = None
+        self._saved = {}                 # per channel name: (vdiv, pos, invert), kept across re-applies
+        self._frame: Optional[ScopeFrame] = None
         self._last_measure = 0.0
         self._last_status = ""
         self._loading = False
+        self.cards: List[Card] = []
         self._build_ui()
+        self._build_setup_dialog()
         self._fill_backends(backend_name)
         self._fill_devices()
         self.apply_acquisition()
@@ -113,185 +128,116 @@ class MainWindow(W.QMainWindow):
         root = W.QWidget()
         root.setObjectName("root")
         self.setCentralWidget(root)
-        outer = W.QVBoxLayout(root)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        body = W.QHBoxLayout()
+        body = W.QHBoxLayout(root)
         body.setContentsMargins(8, 8, 8, 8)
         body.setSpacing(8)
-        outer.addLayout(body, 1)
 
         left = W.QVBoxLayout()
         left.setSpacing(6)
         self.view = ScopeView()
         self.view.triggerLevelMoved.connect(self._level_dragged)
         self.view.cursorsMoved.connect(self._update_cursor_readout)
+        self.view.wheelStepped.connect(lambda d: self._step_combo(self.tdiv_box, -d))
         frame = W.QFrame()
         frame.setObjectName("screenFrame")
         fl = W.QVBoxLayout(frame)
         fl.setContentsMargins(1, 1, 1, 1)
         fl.addWidget(self.view)
         left.addWidget(frame, 1)
+        left.addWidget(self._bottom_bar())
+        body.addLayout(left, 1)
+
+        groups = W.QWidget()
+        gl = W.QVBoxLayout(groups)
+        gl.setContentsMargins(0, 0, 4, 0)
+        gl.setSpacing(2)
+        self.ch_box = W.QGroupBox("Channel 1")
+        self.ch_box.setLayout(self._channel_form())
+        self.trig_box = W.QGroupBox("Trigger")
+        self.trig_box.setLayout(self._trigger_form())
+        self.cur_box = W.QGroupBox("Cursors")
+        self.cur_label = _label("", "mono")
+        cl = W.QVBoxLayout(self.cur_box)
+        cl.addWidget(self.cur_label)
+        self.meas_box = W.QGroupBox("Measurements")
+        ml = W.QVBoxLayout(self.meas_box)
+        self.table = W.QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Source", "Measure", "Value"])
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionMode(W.QAbstractItemView.NoSelection)
+        self.table.setFocusPolicy(Qt.NoFocus)
+        self.table.verticalHeader().hide()
+        self.table.verticalHeader().setDefaultSectionSize(21)
+        self.table.horizontalHeader().setSectionResizeMode(1, W.QHeaderView.Stretch)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._table_menu)
+        ml.addWidget(self.table)
+        for box in (self.ch_box, self.trig_box, self.cur_box, self.meas_box):
+            gl.addWidget(box)
+        gl.addStretch(1)
+        self.cur_box.hide()
+        self.meas_box.hide()
+        scroll = W.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(groups)
+        scroll.setFrameShape(W.QFrame.NoFrame)
+        scroll.setFixedWidth(330)
+        body.addWidget(scroll)
+
+        self.device_label = W.QLabel("")
+        self.device_label.setProperty("role", "muted")
+        self.statusBar().addPermanentWidget(self.device_label)
+        self._toolbar()
+        self._menus()
+
+    def _bottom_bar(self) -> W.QFrame:
+        """Channel selector on the left, horizontal controls on the right."""
         bar = W.QFrame()
         bar.setObjectName("bar")
         self.cards_row = W.QHBoxLayout(bar)
         self.cards_row.setContentsMargins(0, 0, 0, 0)
         self.cards_row.setSpacing(0)
-        left.addWidget(bar)
-        body.addLayout(left, 1)
-
-        side = W.QVBoxLayout()
-        side.setSpacing(4)
-        groups = W.QWidget()
-        gl = W.QVBoxLayout(groups)
-        gl.setContentsMargins(0, 0, 4, 0)
-        gl.setSpacing(2)
-        for title, build in (("Channels", self._vertical_page), ("Timebase", self._horizontal_page),
-                             ("Trigger", self._trigger_page), ("Cursors", self._cursor_page),
-                             ("Acquisition", self._acq_page)):
-            box = W.QGroupBox(title)
-            lay = W.QVBoxLayout(box)
-            lay.setContentsMargins(4, 4, 4, 4)
-            lay.addWidget(build())
-            gl.addWidget(box)
-        gl.addStretch(1)
-        scroll = W.QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(groups)
-        scroll.setFrameShape(W.QFrame.NoFrame)
-        side.addWidget(scroll, 5)
-        box = W.QGroupBox("Measurements")
-        ml = W.QVBoxLayout(box)
-        ml.setContentsMargins(4, 4, 4, 4)
-        self.table = W.QTableWidget(len(MEASURES), 0)
-        self.table.setVerticalHeaderLabels([m[0] for m in MEASURES])
-        self.table.setEditTriggers(W.QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionMode(W.QAbstractItemView.NoSelection)
-        self.table.setFocusPolicy(Qt.NoFocus)
-        self.table.verticalHeader().setDefaultSectionSize(21)
-        self.table.horizontalHeader().setSectionResizeMode(W.QHeaderView.Stretch)
-        ml.addWidget(self.table)
-        side.addWidget(box, 3)
-        sw = W.QWidget()
-        sw.setLayout(side)
-        sw.setFixedWidth(400)
-        body.addWidget(sw)
-        self.statusBar().showMessage("")
-        self._toolbar()
-        self._menus()
-
-    def _toolbar(self) -> None:
-        tb = self.addToolBar("Main")
-        tb.setMovable(False)
-        tb.setFloatable(False)
-        self.run_btn = W.QPushButton("Run")
-        self.run_btn.clicked.connect(self._toggle_run)
-        self.single_btn = W.QPushButton("Single")
-        self.single_btn.clicked.connect(self._single)
-        self.auto_btn = W.QPushButton("Autoset")
-        self.auto_btn.clicked.connect(self._autoset)
-        self.rec_btn = W.QPushButton("Record")
-        self.rec_btn.clicked.connect(self._toggle_record)
-        self.save_btn = W.QPushButton("Save frame")
-        self.save_btn.clicked.connect(self._save_frame)
-        for b in (self.run_btn, self.single_btn, self.auto_btn):
-            tb.addWidget(b)
-        tb.addSeparator()
-        for b in (self.rec_btn, self.save_btn):
-            tb.addWidget(b)
-        self.pill = W.QLabel("Stop")
-        self.device_label = W.QLabel("")
-        self.device_label.setProperty("role", "muted")
-        self.statusBar().addPermanentWidget(self.device_label)
-        self.statusBar().addPermanentWidget(self.pill)
-
-    def _menus(self) -> None:
-        def act(text, slot, shortcut=None, checkable=False):
-            a = QtGui.QAction(text, self)
-            a.setCheckable(checkable)
-            if shortcut:
-                a.setShortcut(shortcut)
-            (a.toggled if checkable else a.triggered).connect(slot)
-            return a
-        mb = self.menuBar()
-        m = mb.addMenu("&File")
-        m.addAction(act("Record...", self._toggle_record, "Ctrl+R"))
-        m.addAction(act("Save frame...", self._save_frame, "Ctrl+S"))
-        m.addSeparator()
-        m.addAction(act("Quit", self.close, "Ctrl+Q"))
-        m = mb.addMenu("&Acquire")
-        m.addAction(act("Run / Stop", self._toggle_run, "F5"))
-        m.addAction(act("Single", self._single, "F6"))
-        m.addAction(act("Autoset", self._autoset, "F7"))
-        m = mb.addMenu("&View")
-        self.cur_action = act("Cursors", self.cur_chk.setChecked, "F8", checkable=True)
-        self.cur_chk.toggled.connect(self.cur_action.setChecked)
-        m.addAction(self.cur_action)
-        m = mb.addMenu("&Help")
-        m.addAction(act("About", lambda: W.QMessageBox.about(
-            self, "About DAQScope", "DAQScope\nOscilloscope front end for DAQ devices.\n"
-            "Not affiliated with National Instruments.")))
-
-    @staticmethod
-    def _tab(page: W.QWidget) -> W.QScrollArea:
-        sc = W.QScrollArea()
-        sc.setWidgetResizable(True)
-        sc.setWidget(page)
-        sc.setFrameShape(W.QFrame.NoFrame)
-        return sc
-
-    @staticmethod
-    def _page(layout) -> W.QWidget:
-        w = W.QWidget()
-        layout.setContentsMargins(2, 2, 2, 2)
-        layout.setSpacing(5)
-        w.setLayout(layout)
-        return w
-
-    def _acq_page(self):
-        f = W.QFormLayout()
-        f.setVerticalSpacing(5)
-        self.backend_box = W.QComboBox()
-        self.backend_box.activated.connect(self._backend_changed)
-        self.device_box = W.QComboBox()
-        self.device_box.activated.connect(lambda *_: self._fill_channels())
-        self.chan_list = W.QListWidget()
-        self.chan_list.setMaximumHeight(130)
-        self.chan_list.itemChanged.connect(lambda *_: self._fill_rates())
-        self.rate_box = W.QComboBox()
-        self.apply_btn = W.QPushButton("Apply")
-        _kind(self.apply_btn, "accent")
-        self.apply_btn.clicked.connect(self.apply_acquisition)
-        f.addRow("Backend", self.backend_box)
-        f.addRow("Device", self.device_box)
-        f.addRow("Inputs", self.chan_list)
-        f.addRow("Sample rate", self.rate_box)
-        f.addRow(self.apply_btn)
-        page = self._page(f)
-        return page
-
-    def _vertical_page(self):
-        self.vgrid = W.QGridLayout()
-        self.vgrid.setVerticalSpacing(4)
-        self.vgrid.setHorizontalSpacing(8)
-        return self._page(self.vgrid)
-
-    def _horizontal_page(self):
-        f = W.QFormLayout()
-        f.setVerticalSpacing(5)
+        self.cards_row.addStretch(1)
+        horiz = W.QHBoxLayout()
+        horiz.setContentsMargins(12, 3, 8, 3)
+        horiz.setSpacing(8)
         self.tdiv_box = W.QComboBox()
         self.tdiv_box.activated.connect(self._changed)
         self.tpos_spin = _spin(0, 100, 5, 0, " %")
         self.tpos_spin.setValue(50)
         self.tpos_spin.valueChanged.connect(self._changed)
-        f.addRow("Time/div", self.tdiv_box)
-        f.addRow("Trigger position", self.tpos_spin)
-        return self._page(f)
+        horiz.addWidget(_label("Time/div"))
+        horiz.addWidget(self.tdiv_box)
+        horiz.addWidget(_label("Position"))
+        horiz.addWidget(self.tpos_spin)
+        wrap = W.QWidget()
+        wrap.setLayout(horiz)
+        self.cards_row.addWidget(wrap)
+        return bar
 
-    def _trigger_page(self):
+    def _channel_form(self):
         f = W.QFormLayout()
-        f.setVerticalSpacing(5)
+        f.setVerticalSpacing(6)
+        self.disp_chk = W.QCheckBox("On")
+        self.disp_chk.toggled.connect(self._changed)
+        self.vbox = W.QComboBox()
+        for v in VDIV_STEPS:
+            self.vbox.addItem(eng(v, "V") + "/div", v)
+        self.vbox.activated.connect(self._changed)
+        self.pos_spin = _spin(-4, 4, 0.1, 2, " div")
+        self.pos_spin.valueChanged.connect(self._changed)
+        self.inv_chk = W.QCheckBox("Invert")
+        self.inv_chk.toggled.connect(self._changed)
+        f.addRow("Display", self.disp_chk)
+        f.addRow("Scale", self.vbox)
+        f.addRow("Position", self.pos_spin)
+        f.addRow("", self.inv_chk)
+        return f
+
+    def _trigger_form(self):
+        f = W.QFormLayout()
+        f.setVerticalSpacing(6)
         self.src_box = W.QComboBox()
         self.src_box.activated.connect(self._changed)
         self.slope_box = W.QComboBox()
@@ -315,22 +261,114 @@ class MainWindow(W.QMainWindow):
         f.addRow("Mode", self.mode_box)
         f.addRow("Level", self.level_spin)
         f.addRow("Hysteresis", hyst_row)
-        return self._page(f)
+        return f
 
-    def _cursor_page(self):
-        v = W.QVBoxLayout()
-        row = W.QHBoxLayout()
-        self.cur_chk = W.QCheckBox("Show cursors")
-        self.cur_chk.toggled.connect(self._cursors_toggled)
-        self.cur_src = W.QComboBox()
-        self.cur_src.activated.connect(self._update_cursor_readout)
-        row.addWidget(self.cur_chk)
-        row.addWidget(self.cur_src, 1)
-        self.cur_label = _label("", "mono")
-        v.addLayout(row)
-        v.addWidget(self.cur_label)
-        v.addStretch(1)
-        return self._page(v)
+    def _toolbar(self) -> None:
+        tb = self.addToolBar("Main")
+        tb.setMovable(False)
+        tb.setFloatable(False)
+
+        def button(text, slot, tip=""):
+            b = W.QPushButton(text)
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            tb.addWidget(b)
+            return b
+        self.run_btn = button("Run", self._toggle_run, "Run / Stop (F5)")
+        self.single_btn = button("Single", self._single, "Single acquisition (F6)")
+        self.force_btn = button("Force", self._force, "Force trigger (F7)")
+        self.auto_btn = button("Autoset", self._autoset, "Autoset (F8)")
+        self.default_btn = button("Default", self._default_setup, "Default setup")
+        tb.addSeparator()
+
+        self.meas_btn = W.QToolButton()
+        self.meas_btn.setText("Measure")
+        self.meas_btn.setPopupMode(W.QToolButton.InstantPopup)
+        self.meas_menu = W.QMenu(self.meas_btn)
+        self.meas_menu.aboutToShow.connect(self._build_measure_menu)
+        self.meas_btn.setMenu(self.meas_menu)
+        tb.addWidget(self.meas_btn)
+        self.cur_btn = W.QPushButton("Cursors")
+        self.cur_btn.setCheckable(True)
+        self.cur_btn.toggled.connect(self._cursors_toggled)
+        tb.addWidget(self.cur_btn)
+        self.acq_btn = W.QToolButton()
+        self.acq_btn.setText("Acquire")
+        self.acq_btn.setPopupMode(W.QToolButton.InstantPopup)
+        acq_menu = W.QMenu(self.acq_btn)
+        group = QtGui.QActionGroup(self)
+        self.acq_actions = {}
+        for label, mode, n in [("Normal", "normal", 1)] + [(f"Average {k}", "average", k) for k in AVERAGES]:
+            a = QtGui.QAction(label, self)
+            a.setCheckable(True)
+            a.setChecked(mode == "normal")
+            a.triggered.connect(lambda _=False, m=mode, n=n: self._set_acq(m, n))
+            group.addAction(a)
+            acq_menu.addAction(a)
+            self.acq_actions[(mode, n)] = a
+        self.acq_btn.setMenu(acq_menu)
+        tb.addWidget(self.acq_btn)
+        button("Clear", self._clear_display, "Clear display and averages")
+        tb.addSeparator()
+        self.rec_btn = button("Record", self._toggle_record, "Record to file (Ctrl+R)")
+        self.save_btn = button("Save frame", self._save_frame, "Save the frame on screen (Ctrl+S)")
+        self.setup_btn = button("Setup...", self._show_setup, "Device, inputs and sample rate")
+
+        for key, slot in (("F5", self._toggle_run), ("F6", self._single), ("F7", self._force),
+                          ("F8", self._autoset), ("Ctrl+R", self._toggle_record),
+                          ("Ctrl+S", self._save_frame)):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
+            sc.activated.connect(slot)
+
+    def _menus(self) -> None:
+        mb = self.menuBar()
+        m = mb.addMenu("&File")
+        for text, slot in (("Record...", self._toggle_record), ("Save frame...", self._save_frame),
+                           ("Setup...", self._show_setup)):
+            a = QtGui.QAction(text, self)
+            a.triggered.connect(slot)
+            m.addAction(a)
+        m.addSeparator()
+        q = QtGui.QAction("Quit", self)
+        q.triggered.connect(self.close)
+        m.addAction(q)
+        m = mb.addMenu("&Help")
+        a = QtGui.QAction("About", self)
+        a.triggered.connect(lambda: W.QMessageBox.about(
+            self, "About DAQScope", "DAQScope\nOscilloscope front end for DAQ devices.\n"
+            "Not affiliated with National Instruments."))
+        m.addAction(a)
+
+    def _build_setup_dialog(self) -> None:
+        """Device, inputs and sample rate. Rarely changed, so it lives in a dialog."""
+        self.setup = W.QDialog(self)
+        self.setup.setWindowTitle("Acquisition setup")
+        f = W.QFormLayout(self.setup)
+        f.setVerticalSpacing(8)
+        self.backend_box = W.QComboBox()
+        self.backend_box.activated.connect(self._backend_changed)
+        self.device_box = W.QComboBox()
+        self.device_box.activated.connect(lambda *_: self._fill_channels())
+        self.chan_list = W.QListWidget()
+        self.chan_list.setMinimumHeight(150)
+        self.chan_list.itemChanged.connect(lambda *_: self._fill_rates())
+        self.rate_box = W.QComboBox()
+        apply = W.QPushButton("Apply")
+        apply.clicked.connect(self._apply_clicked)
+        f.addRow("Backend", self.backend_box)
+        f.addRow("Device", self.device_box)
+        f.addRow("Inputs", self.chan_list)
+        f.addRow("Sample rate", self.rate_box)
+        f.addRow(apply)
+        self.setup.setMinimumWidth(420)
+
+    def _show_setup(self) -> None:
+        self.setup.show()
+        self.setup.raise_()
+
+    def _apply_clicked(self) -> None:
+        self.apply_acquisition()
+        self.setup.hide()
 
     # ----------------------------------------------------------- acquisition
     def _fill_backends(self, current: str) -> None:
@@ -400,7 +438,7 @@ class MainWindow(W.QMainWindow):
             W.QMessageBox.warning(self, "Acquisition", "Select at least one channel.")
             return
         for ch, nm in zip(self.channels, self.names):
-            self._saved[nm] = (ch.vdiv, ch.pos)
+            self._saved[nm] = (ch.vdiv, ch.pos, ch.invert)
         self._teardown()
         try:
             cfg = AIConfig([AIChannel(n) for n in names], sample_rate=fs)
@@ -417,87 +455,38 @@ class MainWindow(W.QMainWindow):
         self.engine = ScopeEngine(fs, n)
         self.channels = []
         for i, nm in enumerate(names):
-            vdiv, pos = self._saved.get(nm, (1.0, ((n - 1) / 2 - i) * 1.6))
-            self.channels.append(ChannelView(True, vdiv, pos))
+            vdiv, pos, inv = self._saved.get(nm, (1.0, _default_pos(i, n), False))
+            self.channels.append(ChannelView(True, vdiv, pos, inv))
+        self.meas = [(s, k) for s, k in self.meas if s < n]
+        self.sel = min(self.sel, n - 1)
         self.view.set_channel_count(n)
         self._frame = None
-        self._build_channel_rows()
+        self._reset_average()
         self._build_cards()
         self._fill_timebase()
         self._loading = True
-        for box in (self.src_box, self.cur_src):
-            box.clear()
-            box.addItems([f"CH{i + 1}  {nm.split('/')[-1]}" for i, nm in enumerate(names)])
-        self.table.setColumnCount(n)
-        self.table.setHorizontalHeaderLabels([f"CH{i + 1}" for i in range(n)])
+        self.src_box.clear()
+        self.src_box.addItems([f"CH{i + 1}  {nm.split('/')[-1]}" for i, nm in enumerate(names)])
         self._loading = False
+        self._select_channel(self.sel)
         self.engine.run(self.runner.buffer)
         self._changed()
+        self._rebuild_table()
         dev = self.device_box.currentData()
-        self.device_label.setText(f"{dev.name} {dev.product_type}".strip() if dev else self.backend.name)
-        self.statusBar().showMessage(f"{self.backend.name}, {n} channels, {eng(fs, 'S/s')} per channel")
-
-    def _build_channel_rows(self) -> None:
-        while self.vgrid.count():
-            w = self.vgrid.takeAt(0).widget()
-            if w is not None:
-                w.deleteLater()
-        self._rows = []
-        for j, text in enumerate(("Channel", "Scale", "Position")):
-            self.vgrid.addWidget(_label(text, "muted"), 0, j)
-        for i, nm in enumerate(self.names):
-            chk = W.QCheckBox(f"CH{i + 1}")
-            chk.setChecked(self.channels[i].enabled)
-            chk.setStyleSheet(f"QCheckBox {{ color:{COLORS[i % len(COLORS)]}; font-weight:700; }}"
-                              f"QCheckBox::indicator:checked {{ background:{COLORS[i % len(COLORS)]};"
-                              f" border-color:{COLORS[i % len(COLORS)]}; }}")
-            vbox = W.QComboBox()
-            for v in steps_125(1e-3, 5.0):
-                vbox.addItem(eng(v, "V") + "/div", v)
-            vbox.setCurrentIndex(max(0, vbox.findData(self.channels[i].vdiv)))
-            pos = _spin(-4, 4, 0.1, 2, " div")
-            pos.setValue(self.channels[i].pos)
-            chk.toggled.connect(self._changed)
-            vbox.activated.connect(self._changed)
-            pos.valueChanged.connect(self._changed)
-            self.vgrid.addWidget(chk, i + 1, 0)
-            self.vgrid.addWidget(vbox, i + 1, 1)
-            self.vgrid.addWidget(pos, i + 1, 2)
-            self._rows.append((chk, vbox, pos))
-        self.vgrid.setRowStretch(len(self.names) + 1, 1)
-        self.vgrid.setColumnStretch(1, 1)
+        self.device_label.setText(f"{self.backend.name}  {dev.name} {dev.product_type}".strip() if dev
+                                  else self.backend.name)
 
     def _build_cards(self) -> None:
-        """Readout tiles under the screen: one per channel, then timebase, trigger and rate."""
-        while self.cards_row.count():
-            w = self.cards_row.takeAt(0).widget()
-            if w is not None:
-                w.deleteLater()
-        self.ch_cards = []
+        for c in self.cards:
+            self.cards_row.removeWidget(c)
+            c.deleteLater()
+        self.cards = []
         for i in range(len(self.names)):
-            c = Card(f"CH{i + 1}", COLORS[i % len(COLORS)], badge=True)
-            c.clicked.connect(lambda i=i: self._rows[i][0].toggle())
-            c.wheel.connect(lambda d, i=i: self._step_combo(self._rows[i][1], -d))
-            self.cards_row.addWidget(c)
-            self.ch_cards.append(c)
-        self.cards_row.addStretch(1)
-        self.time_card = Card("Time")
-        self.time_card.wheel.connect(lambda d: self._step_combo(self.tdiv_box, -d))
-        self.trig_card = Card("Trigger")
-        self.trig_card.wheel.connect(self._wheel_level)
-        self.rate_card = Card("Rate")
-        for c in (self.time_card, self.trig_card, self.rate_card):
-            self.cards_row.addWidget(c)
-
-    def _step_combo(self, box: W.QComboBox, step: int) -> None:
-        """Move a 1-2-5 combo by one step, as turning a knob."""
-        i = min(max(box.currentIndex() + step, 0), box.count() - 1)
-        if i != box.currentIndex():
-            box.setCurrentIndex(i)
-            self._changed()
-
-    def _wheel_level(self, d: int) -> None:
-        self.level_spin.setValue(self.level_spin.value() + d * self.level_spin.singleStep())
+            c = Card(f"CH{i + 1}", COLORS[i % len(COLORS)])
+            c.clicked.connect(lambda i=i: self._select_channel(i))
+            c.wheel.connect(lambda d, i=i: self._step_vdiv(i, -d))
+            self.cards_row.insertWidget(i, c)
+            self.cards.append(c)
 
     def _fill_timebase(self) -> None:
         keep = self.tdiv_box.currentData() or 2e-2
@@ -511,13 +500,49 @@ class MainWindow(W.QMainWindow):
         self.tdiv_box.setCurrentIndex(best)
 
     # ----------------------------------------------------------- front panel
+    def _select_channel(self, i: int) -> None:
+        self.sel = i
+        ch = self.channels[i]
+        col = COLORS[i % len(COLORS)]
+        self.ch_box.setTitle(f"Channel {i + 1}")
+        self.ch_box.setStyleSheet(f"QGroupBox::title {{ color: {col}; }}")
+        for w in (self.disp_chk, self.vbox, self.pos_spin, self.inv_chk):
+            w.blockSignals(True)
+        self.disp_chk.setChecked(ch.enabled)
+        self.vbox.setCurrentIndex(max(0, self.vbox.findData(ch.vdiv)))
+        self.pos_spin.setValue(ch.pos)
+        self.inv_chk.setChecked(ch.invert)
+        for w in (self.disp_chk, self.vbox, self.pos_spin, self.inv_chk):
+            w.blockSignals(False)
+        for k, c in enumerate(self.cards):
+            _prop(c, "selected", k == i)
+        self._update_cursor_readout()
+
+    def _step_combo(self, box: W.QComboBox, step: int) -> None:
+        """Move a 1-2-5 combo by one step, as turning a knob."""
+        i = min(max(box.currentIndex() + step, 0), box.count() - 1)
+        if i != box.currentIndex():
+            box.setCurrentIndex(i)
+            self._changed()
+
+    def _step_vdiv(self, i: int, step: int) -> None:
+        ch = self.channels[i]
+        k = min(max(VDIV_STEPS.index(min(VDIV_STEPS, key=lambda v: abs(v - ch.vdiv))) + step, 0),
+                len(VDIV_STEPS) - 1)
+        ch.vdiv = VDIV_STEPS[k]
+        if i == self.sel:
+            self._select_channel(i)
+        self._changed()
+
     def _changed(self, *_) -> None:
+        """Read the widgets into the channel, timebase and trigger settings."""
         if self._loading or self.engine is None:
             return
-        for ch, (chk, vbox, pos) in zip(self.channels, self._rows):
-            ch.enabled = chk.isChecked()
-            ch.vdiv = vbox.currentData()
-            ch.pos = pos.value()
+        ch = self.channels[self.sel]
+        ch.enabled = self.disp_chk.isChecked()
+        ch.vdiv = self.vbox.currentData()
+        ch.pos = self.pos_spin.value()
+        ch.invert = self.inv_chk.isChecked()
         e = self.engine
         e.time_per_div = self.tdiv_box.currentData()
         e.trigger_pos = self.tpos_spin.value() / 100
@@ -527,23 +552,32 @@ class MainWindow(W.QMainWindow):
                                   self.mode_box.currentText().lower(),
                                   None if self.hyst_auto.isChecked() else self.hyst_spin.value())
         self.hyst_spin.setEnabled(not self.hyst_auto.isChecked())
-        self.level_spin.setSingleStep(self.channels[src].vdiv / 10)
-        self.hyst_spin.setSingleStep(self.channels[src].vdiv / 10)
+        step = self.channels[src].vdiv / 10
+        self.level_spin.setSingleStep(step)
+        self.hyst_spin.setSingleStep(step)
+        sig = (e.time_per_div, e.trigger_pos, e.trigger)
+        if sig != self._sig:               # averages are only valid for one timebase and trigger
+            self._sig = sig
+            self._reset_average()
         self._refresh()
 
     def _refresh(self) -> None:
         e = self.engine
         self.view.redraw(self.channels, e.time_per_div, e.trigger_pos, e.trigger.source, e.trigger.level)
-        for card, ch in zip(self.ch_cards, self.channels):
-            card.set_value(f"{eng(ch.vdiv, 'V')}/div")
+        for card, ch in zip(self.cards, self.channels):
+            card.set_value(f"{eng(ch.vdiv, 'V')}/div" + (" inv" if ch.invert else ""))
             card.set_dim(not ch.enabled)
-        t = e.trigger
-        self.time_card.set_value(f"{eng(e.time_per_div, 's')}/div")
-        arrow = "\u2197" if t.slope == "rising" else "\u2198"
-        self.trig_card.title.setText(f"Trigger CH{t.source + 1} {t.mode}")
-        self.trig_card.set_value(f"{arrow} {eng(t.level, 'V')}")
-        self.rate_card.set_value(eng(e.sample_rate, "S/s"))
+        self._overlay()
         self._update_cursor_readout()
+
+    def _overlay(self) -> None:
+        """Status and acquisition info drawn in the corners of the screen."""
+        if self.engine is None:
+            return
+        status = self.engine.status
+        mode, n = self.acq
+        info = eng(self.engine.sample_rate, "S/s") + (f"   Average {n}" if mode == "average" else "")
+        self.view.set_status(status, STATUS_COLORS.get(status, MUTED), info)
 
     def _level_dragged(self, ydiv: float) -> None:
         if self.engine is None:
@@ -566,6 +600,39 @@ class MainWindow(W.QMainWindow):
         self._changed()
         self.engine.run(self.runner.buffer)
 
+    def _force(self) -> None:
+        if self.engine is None:
+            return
+        fr = self.engine.force(self.runner.buffer)
+        if fr is not None:
+            self._show(fr)
+
+    def _clear_display(self) -> None:
+        self._frame = None
+        self._reset_average()
+        self.view.clear_frame()
+        self._update_measure()
+
+    def _default_setup(self) -> None:
+        """Back to the power-on state: all channels shown, 1 V/div, auto trigger at 0 V."""
+        self._stop_recording()
+        self._saved.clear()
+        self.channels, self.names = [], []        # so apply_acquisition does not save the old scales
+        self.meas.clear()
+        self.cur_btn.setChecked(False)
+        self._set_acq("normal", 1)
+        self.acq_actions[("normal", 1)].setChecked(True)
+        self._loading = True
+        self.tpos_spin.setValue(50)
+        self.slope_box.setCurrentIndex(0)
+        self.mode_box.setCurrentIndex(0)
+        self.level_spin.setValue(0.0)
+        self.hyst_auto.setChecked(True)
+        self.tdiv_box.setCurrentIndex(max(0, self.tdiv_box.findData(2e-2)))
+        self._loading = False
+        self.sel = 0
+        self.apply_acquisition()
+
     def _autoset(self) -> None:
         if self.engine is None or self.runner is None:
             return
@@ -573,17 +640,17 @@ class MainWindow(W.QMainWindow):
         data = self.runner.buffer.latest(int(fs * 0.5))
         if data.shape[1] < 100:
             return
+        src = max(0, self.src_box.currentIndex())
         self._loading = True
-        for i, (ch, (chk, vbox, pos)) in enumerate(zip(self.channels, self._rows)):
+        for i, ch in enumerate(self.channels):
             if not ch.enabled:
                 continue
             m = measure(data[i], fs)
             if not np.isfinite(m["pp"]):
                 continue
-            vdiv = min(5.0, max(1e-3, ceil_125(max(m["pp"], 1e-6) / 6)))     # signal fills 6 of 8 divisions
-            vbox.setCurrentIndex(vbox.findData(vdiv))
-            pos.setValue(-(m["max"] + m["min"]) / 2 / vdiv)
-            if i == max(0, self.src_box.currentIndex()):
+            ch.vdiv = min(5.0, max(1e-3, ceil_125(max(m["pp"], 1e-6) / 6)))    # signal fills 6 of 8 divisions
+            ch.pos = -(m["max"] + m["min"]) / 2 / ch.vdiv
+            if i == src:
                 self.level_spin.setValue((m["max"] + m["min"]) / 2)
                 if np.isfinite(m["freq"]):
                     want = 3 / m["freq"] / DIVS_X                          # three cycles on screen
@@ -593,26 +660,116 @@ class MainWindow(W.QMainWindow):
         self.mode_box.setCurrentText("Auto")
         self.tpos_spin.setValue(50)
         self._loading = False
+        self._select_channel(self.sel)
         self._changed()
         self.engine.run(self.runner.buffer)
+
+    # ------------------------------------------------------------- acquire
+    def _set_acq(self, mode: str, n: int) -> None:
+        self.acq = (mode, n)
+        self.averager.reset(n if mode == "average" else 1)
+        self._overlay()
+
+    def _reset_average(self) -> None:
+        self.averager.reset()
+
+    def _show(self, fr: ScopeFrame) -> None:
+        fr = self.averager.add(fr)
+        self._frame = fr
+        self.view.set_frame(fr)
+        e = self.engine
+        self.view.redraw(self.channels, e.time_per_div, e.trigger_pos, e.trigger.source, e.trigger.level)
+        now = time.monotonic()
+        if now - self._last_measure > 0.25:
+            self._last_measure = now
+            self._update_measure()
 
     # --------------------------------------------------------------- cursors
     def _cursors_toggled(self, on: bool) -> None:
         self.view.show_cursors(on)
+        self.cur_box.setVisible(on)
         self._update_cursor_readout()
 
     def _update_cursor_readout(self, *_) -> None:
-        if not self.cur_chk.isChecked() or self.engine is None or not self.channels:
-            self.cur_label.setText("")
+        if not self.cur_btn.isChecked() or self.engine is None or not self.channels:
             return
-        ch = self.channels[max(0, self.cur_src.currentIndex())]
+        ch = self.channels[self.sel]
         td = self.engine.time_per_div
         t1, t2 = (ln.value() * td for ln in self.view.cur_t)
         v1, v2 = ((ln.value() - ch.pos) * ch.vdiv for ln in self.view.cur_v)
         dt = abs(t2 - t1)
         inv = eng(1 / dt, "Hz") if dt > 0 else "--"
-        self.cur_label.setText(f"ΔT   {eng(dt, 's')}    1/ΔT   {inv}\nΔV   {eng(abs(v2 - v1), 'V')}\n"
-                               f"V1   {eng(v1, 'V')}\nV2   {eng(v2, 'V')}")
+        self.cur_label.setText(f"Source  CH{self.sel + 1}\nΔT      {eng(dt, 's')}\n1/ΔT    {inv}\n"
+                               f"ΔV      {eng(abs(v2 - v1), 'V')}\nV1      {eng(v1, 'V')}\n"
+                               f"V2      {eng(v2, 'V')}")
+
+    # ----------------------------------------------------------- measurements
+    def _build_measure_menu(self) -> None:
+        m = self.meas_menu
+        m.clear()
+        head = m.addAction(f"Source: CH{self.sel + 1}")
+        head.setEnabled(False)
+        m.addSeparator()
+        for label, key, _ in MEASURES:
+            a = m.addAction(label)
+            a.setCheckable(True)
+            a.setChecked((self.sel, key) in self.meas)
+            a.triggered.connect(lambda _=False, k=key: self._toggle_measure(self.sel, k))
+        m.addSeparator()
+        m.addAction("Clear all").triggered.connect(self._clear_measures)
+
+    def _toggle_measure(self, src: int, key: str) -> None:
+        if (src, key) in self.meas:
+            self.meas.remove((src, key))
+        else:
+            self.meas.append((src, key))
+        self._rebuild_table()
+
+    def _clear_measures(self) -> None:
+        self.meas.clear()
+        self._rebuild_table()
+
+    def _table_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if 0 <= row < len(self.meas):
+            menu = W.QMenu(self)
+            menu.addAction("Remove").triggered.connect(lambda: self._remove_measure(row))
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _remove_measure(self, row: int) -> None:
+        del self.meas[row]
+        self._rebuild_table()
+
+    def _rebuild_table(self) -> None:
+        names = {k: (label, unit) for label, k, unit in MEASURES}
+        self.table.setRowCount(len(self.meas))
+        for r, (src, key) in enumerate(self.meas):
+            s = W.QTableWidgetItem(f"CH{src + 1}")
+            s.setForeground(QtGui.QColor(COLORS[src % len(COLORS)]))
+            self.table.setItem(r, 0, s)
+            self.table.setItem(r, 1, W.QTableWidgetItem(names[key][0]))
+        self.meas_box.setVisible(bool(self.meas))
+        self.table.setFixedHeight(self.table.horizontalHeader().height() + 21 * len(self.meas) + 4)
+        self._update_measure()
+
+    def _update_measure(self) -> None:
+        fr = self._frame
+        if not self.meas or fr is None:
+            for r in range(len(self.meas)):
+                self.table.setItem(r, 2, W.QTableWidgetItem("--"))
+            return
+        v0 = fr.valid_from
+        cache = {}
+        for r, (src, key) in enumerate(self.meas):
+            if src not in cache:
+                sign = -1.0 if self.channels[src].invert else 1.0
+                cache[src] = measure(sign * fr.data[src, v0:], fr.sample_rate)
+            val = cache[src][key]
+            unit = next(u for _, k, u in MEASURES if k == key)
+            text = "--" if val != val else (f"{val * 100:.1f} %" if key == "duty" else eng(val, unit))
+            item = W.QTableWidgetItem(text)
+            item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.table.setItem(r, 2, item)
 
     # ---------------------------------------------------------- main refresh
     def _tick(self) -> None:
@@ -628,19 +785,10 @@ class MainWindow(W.QMainWindow):
             W.QMessageBox.critical(self, "Recording error", str(err))
         fr = self.engine.update(self.runner.buffer)
         if fr is not None:
-            self._frame = fr
-            self.view.set_frame(fr)
-            self._refresh_trace_only()
-            now = time.monotonic()
-            if now - self._last_measure > 0.25:
-                self._last_measure = now
-                self._update_measure()
+            self._show(fr)
         if self.engine.status != self._last_status:
             self._last_status = self.engine.status
-            col = STATUS_COLORS.get(self._last_status, MUTED)
-            self.view.set_status(self._last_status, col, eng(self.engine.sample_rate, "S/s"))
-            self.pill.setText(self._last_status)
-            self.pill.setStyleSheet(f"color:{col};")
+            self._overlay()
         if self.hyst_auto.isChecked() and abs(self.hyst_spin.value() - self.engine.hysteresis_used) > 5e-5:
             self.hyst_spin.blockSignals(True)      # show the value the search used, without re-entering _changed
             self.hyst_spin.setValue(self.engine.hysteresis_used)
@@ -649,25 +797,7 @@ class MainWindow(W.QMainWindow):
         want = "run" if run else "stop"
         if self.run_btn.property("kind") != want:
             self.run_btn.setText("Run" if run else "Stop")
-            _kind(self.run_btn, want)
-
-    def _refresh_trace_only(self) -> None:
-        e = self.engine
-        self.view.redraw(self.channels, e.time_per_div, e.trigger_pos, e.trigger.source, e.trigger.level)
-
-    def _update_measure(self) -> None:
-        fr = self._frame
-        if fr is None:
-            return
-        v0 = fr.valid_from
-        for i, ch in enumerate(self.channels):
-            m = measure(fr.data[i, v0:], fr.sample_rate) if ch.enabled else {}
-            for r, (_, key, unit) in enumerate(MEASURES):
-                val = m.get(key, float("nan"))
-                text = "--" if val != val else (f"{val * 100:.1f} %" if key == "duty" else eng(val, unit))
-                item = W.QTableWidgetItem(text)
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self.table.setItem(r, i, item)
+            _prop(self.run_btn, "kind", want)
 
     # ------------------------------------------------------------ file output
     def _toggle_record(self) -> None:
@@ -687,12 +817,12 @@ class MainWindow(W.QMainWindow):
             return
         self.runner.subscribe(self.writer.put)
         self.rec_btn.setText("Stop recording")
-        _kind(self.rec_btn, "rec")
+        _prop(self.rec_btn, "kind", "rec")
 
     def _stop_recording(self, report: bool = True) -> None:
         w, self.writer = self.writer, None
         self.rec_btn.setText("Record")
-        _kind(self.rec_btn, "")
+        _prop(self.rec_btn, "kind", "")
         if w is None:
             return
         if self.runner is not None:
