@@ -1,4 +1,6 @@
-"""Dark instrument theme: one palette and one style sheet for the whole application."""
+"""Dark instrument theme: one palette and one style sheet for the whole application.
+
+No font family or size is set here, so every widget uses the application font."""
 from __future__ import annotations
 
 from .qt import QtGui, QtWidgets
@@ -15,7 +17,6 @@ SELECT = "#4b6eaf"          # selection and focus only, not a brand colour
 GOOD = "#7fbf7f"
 WARN = "#d6b05a"
 BAD = "#e07a7a"
-MONO = '"DejaVu Sans Mono","Consolas","Liberation Mono",monospace'
 
 STATUS_COLORS = {"Trig'd": GOOD, "Auto": WARN, "Roll": TEXT, "Armed": TEXT, "Ready": TEXT,
                  "Stop": BAD}
@@ -32,9 +33,7 @@ QFrame#seg:hover {{ background: #35383a; }}
 QFrame#seg[selected="true"] {{ background: #3d4044; }}
 QFrame#screenFrame {{ background: #000; border: 1px solid {BORDER2}; }}
 QLabel[role="muted"] {{ color: {MUTED}; }}
-QLabel[role="value"] {{ font-family: {MONO}; }}
-QLabel[role="mono"] {{ font-family: {MONO}; }}
-QTableWidget {{ gridline-color: {BORDER}; font-family: {MONO}; font-size: 11px; }}
+QTableWidget {{ gridline-color: {BORDER}; }}
 QHeaderView::section {{ background: {PANEL}; color: {MUTED}; border: none; border-right: 1px solid {BORDER}; border-bottom: 1px solid {BORDER}; padding: 3px; }}
 QTabBar::tab {{ padding: 4px 10px; }}
 """

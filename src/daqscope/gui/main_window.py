@@ -86,10 +86,10 @@ class Card(W.QFrame):
         The selected channel also gets a bar on top."""
         if on:
             self.title.setStyleSheet(f"background:{self._color}; color:#000; font-weight:bold;"
-                                     " font-size:13px; padding: 4px 9px;")
+                                     " padding: 4px 9px;")
             self.value.setStyleSheet("")
         else:
-            self.title.setStyleSheet("color:#7a7a7a; font-weight:bold; font-size:13px;"
+            self.title.setStyleSheet("color:#7a7a7a; font-weight:bold;"
                                      " border:1px solid #5a5a5a; padding: 3px 8px;")
             self.value.setStyleSheet("color:#6a6a6a;")
         self.setStyleSheet(f"QFrame#seg {{ border-top: 3px solid {self._color if selected else 'transparent'}; }}")
@@ -167,7 +167,8 @@ class MainWindow(W.QMainWindow):
         self.trig_box = W.QGroupBox("Trigger")
         self.trig_box.setLayout(self._trigger_form())
         self.cur_box = W.QGroupBox("Cursors")
-        self.cur_label = _label("", "mono")
+        self.cur_label = _label("", "muted")
+        self.cur_label.setTextFormat(Qt.RichText)
         cl = W.QVBoxLayout(self.cur_box)
         cl.addWidget(self.cur_label)
         self.meas_box = W.QGroupBox("Measurements")
@@ -719,9 +720,11 @@ class MainWindow(W.QMainWindow):
         v1, v2 = (ln.value() * ch.vdiv - ch.offset for ln in self.view.cur_v)
         dt = abs(t2 - t1)
         inv = eng(1 / dt, "Hz") if dt > 0 else "--"
-        self.cur_label.setText(f"Source  CH{self.sel + 1}\nΔT      {eng(dt, 's')}\n1/ΔT    {inv}\n"
-                               f"ΔV      {eng(abs(v2 - v1), 'V')}\nV1      {eng(v1, 'V')}\n"
-                               f"V2      {eng(v2, 'V')}")
+        rows = [("Source", f"CH{self.sel + 1}"), ("ΔT", eng(dt, "s")), ("1/ΔT", inv),
+                ("ΔV", eng(abs(v2 - v1), "V")), ("V1", eng(v1, "V")), ("V2", eng(v2, "V"))]
+        self.cur_label.setText("<table cellspacing='2'>" + "".join(
+            f"<tr><td style='color:#9a9a9a; padding-right:14px'>{k}</td><td align='right'>{v}</td></tr>"
+            for k, v in rows) + "</table>")
 
     # ----------------------------------------------------------- measurements
     def _build_measure_menu(self) -> None:
