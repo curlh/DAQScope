@@ -1,55 +1,29 @@
 # DAQScope
 
-An open-source oscilloscope-style GUI and acquisition library for data acquisition (DAQ) devices.
-Data arrives as numpy arrays, the hardware layer is a thin replaceable backend, and a simulated
-device lets you develop, test and run CI without any hardware.
+A free oscilloscope for data acquisition cards. You plug in an NI card, start DAQScope, and get
+a scope screen with V/div and time/div knobs, an edge trigger, cursors and automatic
+measurements. Underneath is a small Python library that hands you the same data as numpy arrays,
+so whatever you see on screen you can also script.
 
-DAQScope is an independent project. It is not affiliated with, endorsed by, or sponsored by
-National Instruments. To use NI hardware you must install the NI-DAQmx driver yourself. DAQScope
-does not ship or redistribute it.
+![DAQScope showing four channels](docs/screenshot.png)
 
-## Status
+I started it because a PCIe-6321 on my bench had no free way to look at a signal quickly. NI MAX
+test panels were not available on my machine, and the paid logging software is overkill when all
+you want is to see a waveform and save it. DAQScope aims to be the quick look tool, and a clean
+starting point if you want to build your own measurement program on top of it.
 
-Early development (version 0.1 dev).
+There is a simulated device built in. You can try everything, run the tests and develop new
+features without any hardware.
 
-| Area | State |
-| --- | --- |
-| Core library (config, sessions, ring buffer, trigger, measurements) | done |
-| Simulated backend (AI, AO, digital I/O, counters) | done |
-| File writers and readers (npz, HDF5, CSV) | done |
-| Oscilloscope GUI for analog input | done, tested on the simulated device |
-| NI-DAQmx backend | planned, needs testing on real hardware |
-| GUI panels for analog output, digital I/O and counters | planned |
+DAQScope is an independent project. It is not affiliated with or endorsed by National Instruments.
+For NI hardware you install the NI-DAQmx driver yourself, DAQScope does not ship it.
 
-## Installation
+## Try it in two minutes
 
-Python 3.9 or newer. Installing into a new, empty environment is recommended, so that the Qt
-and numpy versions DAQScope pulls in do not clash with other projects.
+You need Python 3.9 or newer. A fresh environment keeps the Qt and numpy versions DAQScope brings
+from clashing with your other projects.
 
-With conda:
-
-```
-conda create -n daqscope python=3.12
-conda activate daqscope
-```
-
-or with venv (on Windows use `daqscope-env\Scripts\activate`):
-
-```
-python -m venv daqscope-env
-source daqscope-env/bin/activate
-```
-
-Then install DAQScope into that environment:
-
-```
-git clone https://github.com/curlh/DAQScope.git
-cd DAQScope
-pip install -e .[gui,hdf5]
-```
-
-With [uv](https://docs.astral.sh/uv/) the environment and the install are one step. Run this
-inside the cloned folder, it creates `.venv` there:
+With [uv](https://docs.astral.sh/uv/), which is the quickest:
 
 ```
 git clone https://github.com/curlh/DAQScope.git
@@ -58,51 +32,82 @@ uv sync --extra gui --extra hdf5
 uv run python -m daqscope
 ```
 
-Add `--extra ni` to the sync command for NI hardware, or `--extra dev` to run the tests with
-`uv run pytest`.
-
-Optional extras: `gui` (PySide6, pyqtgraph), `hdf5` (h5py), `ni` (nidaqmx), `dev` (pytest).
-
-For NI hardware, install the NI-DAQmx driver from National Instruments first, then
-`pip install -e .[ni]` in the same environment.
-
-## Oscilloscope GUI
+With conda or venv:
 
 ```
-python -m daqscope                    # simulated device
-python -m daqscope --backend nidaqmx  # real hardware, once the backend is available
+conda create -n daqscope python=3.12
+conda activate daqscope
+git clone https://github.com/curlh/DAQScope.git
+cd DAQScope
+pip install -e .[gui,hdf5]
+python -m daqscope
 ```
 
-The screen is a 10 x 8 division display. The controls follow a bench oscilloscope.
+A window opens with four simulated channels. Press Autoset and the traces settle on screen.
 
-- Vertical: per-channel enable, V/div (1 mV to 5 V in a 1-2-5 sequence) and position.
-- Horizontal: time/div in a 1-2-5 sequence and trigger position. Auto mode rolls the display at
-  100 ms/div and slower.
-- Trigger: source channel, rising or falling edge, level, hysteresis, and Auto, Normal or Single
-  mode. The trigger point is interpolated between samples, so the trace does not jitter. The
-  level line on the screen can be dragged.
-- Run/Stop, Single and Autoset (picks V/div, position, trigger level and time/div from the signal).
-- Two pairs of cursors with delta time, 1/delta time and delta voltage.
-- Automatic measurements per channel: Vpp, max, min, mean, RMS, frequency, period and duty cycle.
-- Peak-detect display, so narrow glitches stay visible at slow timebases.
-- Record to HDF5, CSV or npz on a background thread, and save the current frame.
+## Using it with a real card
 
-The sample rate is set in the Acquisition panel. On multiplexed cards the maximum rate is shared
-between the selected channels.
+Install the NI-DAQmx driver from National Instruments, then add the Python side in the same
+environment and check that DAQScope can see your card.
 
-## Using the library
+```
+pip install -e .[ni]
+python examples/hardware_check.py
+```
+
+That script lists the devices it finds and reads one second from the first analog input, which
+tells you quickly whether the driver and card are happy. Then start the scope on the real device:
+
+```
+python -m daqscope --backend nidaqmx
+```
+
+The NI backend is new. It follows the nidaqmx 1.x API and is covered by tests that run against a
+stand-in for the driver, so the first run on a real card is the real test. If something misbehaves,
+please open an issue with the device model and the error text.
+
+On cards that share one converter between channels, such as the X series, the maximum sample rate
+is divided between the channels you select. DAQScope only offers rates the card can do for the
+current selection.
+
+## What the scope does
+
+The screen is a classic ten by eight divisions. Each channel has its own V/div and vertical
+position, and the timebase goes from microseconds to a second per division in the usual 1, 2, 5
+steps. Below the screen, a tile per channel shows its scale. Click a tile to hide the channel, or
+scroll over it to change the scale like turning a knob. The timebase and trigger tiles work the
+same way.
+
+Triggering works on a rising or falling edge of any channel, with Auto, Normal and Single modes.
+You can drag the trigger level line on the screen. Hysteresis is chosen automatically from the
+noise on the signal, so a slow edge with some noise does not make the picture flip between phases.
+The trigger point is interpolated between samples, which keeps the trace steady. At 100 ms per
+division and slower the display rolls instead of triggering, like a real scope.
+
+Autoset looks at the signals and picks V/div, position, trigger level and timebase for you. Two
+pairs of cursors read out time differences, frequency and voltage differences. The measurement
+table gives Vpp, maximum, minimum, mean, RMS, frequency, period and duty cycle per channel. At
+slow timebases the display keeps narrow glitches visible instead of dropping them.
+
+Record writes the incoming data to HDF5, CSV or npz while you watch. Writing happens on its own
+thread, so a slow disk does not disturb the display. Save frame stores just what is on screen.
+
+## Using it from Python
+
+The library does not need the GUI. A minimal acquisition into numpy:
 
 ```python
 from daqscope.backends import get_backend
 from daqscope.core import AIChannel, AIConfig, AcquisitionSession
 
-backend = get_backend("simulated")        # "nidaqmx" for real hardware
+backend = get_backend("simulated")          # or "nidaqmx"
 cfg = AIConfig([AIChannel("SimDev1/ai0"), AIChannel("SimDev1/ai1")], sample_rate=10_000)
 with AcquisitionSession(backend, cfg) as session:
-    data = session.read(10_000)           # numpy array, shape (n_channels, 10000)
+    data = session.read(10_000)             # numpy array, shape (2, 10000)
 ```
 
-Continuous acquisition with recording on a background thread:
+For continuous acquisition, a `StreamRunner` reads on a worker thread into a ring buffer and
+hands every block to whoever subscribes, for example a file writer:
 
 ```python
 from daqscope.core import StreamRunner
@@ -113,34 +118,37 @@ with AcquisitionSession(backend, cfg) as session:
     with open_writer("run.h5", [c.name for c in cfg.channels], cfg.sample_rate) as writer:
         runner.subscribe(writer.put)
         runner.start()
-        ...                               # runner.buffer.latest(n) gives the newest samples
+        ...                                 # runner.buffer.latest(n) is the newest n samples
         runner.stop()
 ```
 
-The oscilloscope trigger and timebase logic (`daqscope.core.ScopeEngine`) has no GUI dependency
-and can be used from scripts. More examples are in `examples/`.
+The trigger and timebase logic of the scope lives in `daqscope.core.ScopeEngine` and has no GUI
+dependency, so you can use it in scripts too. Analog output, digital lines and counters are
+available through the same backend object. See the `examples` folder for short runnable scripts.
 
-## Project layout
+## How it is put together
 
 ```
 src/daqscope/
-  core/        config, sessions, ring buffer, trigger, scope engine, measurements, waveforms
-  backends/    backend interface, simulated backend, NI-DAQmx backend (planned)
-  io/          background file writers and readers
-  gui/         oscilloscope window (PySide6 and pyqtgraph)
-  app.py       command line entry point
-examples/      scripts that run on the simulated device
+  core/        acquisition sessions, ring buffer, trigger and scope engine, measurements
+  backends/    the backend interface, a simulated device and the NI-DAQmx backend
+  io/          file writers and readers
+  gui/         the scope window, built with PySide6 and pyqtgraph
+examples/      small scripts, including a hardware check
 tests/         pytest suite, runs without hardware
 ```
 
-`core` does not import hardware or GUI packages. Only the NI-DAQmx backend imports `nidaqmx`, and
-only `gui/qt.py` chooses the Qt binding.
+The core never imports the GUI or a hardware package. Only the NI backend imports `nidaqmx`, and
+only `gui/qt.py` decides which Qt binding is used. To support another kind of hardware you
+implement the interfaces in `backends/base.py` and register the backend in
+`backends/__init__.py`. The simulated backend is a complete reference to copy from.
 
-## Adding a backend
+## Status and plans
 
-Implement the interfaces in `daqscope/backends/base.py` (`Backend` and the AI, AO, DI, DO and
-counter task classes) and register the backend in `daqscope/backends/__init__.py`. The simulated
-backend in `simulated.py` is a complete reference.
+The analog input scope, the simulated device, file recording and the NI backend are in place. The
+GUI does not yet have panels for analog output, digital I/O and counters, although the backends
+support them. Next on the list are those panels, an automatic sample rate that follows the
+timebase, and choosing the hardware voltage range from V/div.
 
 ## Development
 
@@ -149,8 +157,9 @@ pip install -e .[dev,gui,hdf5]
 pytest
 ```
 
-The tests use the simulated backend. The GUI can be checked without a display by running with
-`QT_QPA_PLATFORM=offscreen`. See `CONTRIBUTING.md`.
+Tests use the simulated backend and a fake of the NI driver. To look at the GUI on a machine
+without a display, run with `QT_QPA_PLATFORM=offscreen`. See `CONTRIBUTING.md` for the ground
+rules.
 
 ## License
 
