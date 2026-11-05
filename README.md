@@ -23,7 +23,24 @@ Early development (version 0.1 dev).
 
 ## Installation
 
-Python 3.9 or newer.
+Python 3.9 or newer. Installing into a new, empty environment is recommended, so that the Qt
+and numpy versions DAQScope pulls in do not clash with other projects.
+
+With conda:
+
+```
+conda create -n daqscope python=3.12
+conda activate daqscope
+```
+
+or with venv (on Windows use `daqscope-env\Scripts\activate`):
+
+```
+python -m venv daqscope-env
+source daqscope-env/bin/activate
+```
+
+Then install DAQScope into that environment:
 
 ```
 git clone https://github.com/curlh/DAQScope.git
@@ -34,7 +51,7 @@ pip install -e .[gui,hdf5]
 Optional extras: `gui` (PySide6, pyqtgraph), `hdf5` (h5py), `ni` (nidaqmx), `dev` (pytest).
 
 For NI hardware, install the NI-DAQmx driver from National Instruments first, then
-`pip install -e .[ni]`.
+`pip install -e .[ni]` in the same environment.
 
 ## Oscilloscope GUI
 
