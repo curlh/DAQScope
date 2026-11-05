@@ -676,8 +676,8 @@ class MainWindow(W.QMainWindow):
             return
         if self.runner is None:
             return
-        path, _ = W.QFileDialog.getSaveFileName(self, "Record to file", "recording.h5",
-                                                "HDF5 (*.h5);;CSV (*.csv);;NumPy (*.npz)")
+        path, _ = W.QFileDialog.getSaveFileName(self, "Record to file", "recording.csv",
+                                                "CSV (*.csv);;NumPy (*.npz)")
         if not path:
             return
         try:
@@ -709,7 +709,7 @@ class MainWindow(W.QMainWindow):
         fr = self._frame
         if fr is None:
             return
-        path, _ = W.QFileDialog.getSaveFileName(self, "Save frame", "frame.npz", "NumPy (*.npz);;CSV (*.csv)")
+        path, _ = W.QFileDialog.getSaveFileName(self, "Save frame", "frame.csv", "CSV (*.csv);;NumPy (*.npz)")
         if not path:
             return
         v0 = fr.valid_from

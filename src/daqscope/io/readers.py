@@ -24,12 +24,6 @@ def read_recording(path: str) -> Recording:
         with np.load(path) as z:
             return Recording(z["data"], [str(c) for c in z["channels"]],
                              float(z["sample_rate"]), str(z["start_time"]))
-    if ext in ("h5", "hdf5"):
-        import h5py
-        with h5py.File(path, "r") as f:
-            chans = [c.decode() if isinstance(c, bytes) else str(c) for c in f.attrs["channels"]]
-            return Recording(f["data"][...], chans, float(f.attrs["sample_rate"]),
-                             str(f.attrs["start_time"]))
     if ext == "csv":
         meta = {}
         with open(path) as f:

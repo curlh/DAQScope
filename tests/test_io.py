@@ -11,10 +11,8 @@ def blocks():
     return [rng.normal(size=(2, n)) for n in (100, 250, 7)]
 
 
-@pytest.mark.parametrize("ext", ["npz", "h5", "csv"])
+@pytest.mark.parametrize("ext", ["npz", "csv"])
 def test_roundtrip(tmp_path, ext):
-    if ext == "h5":
-        pytest.importorskip("h5py")
     path = str(tmp_path / f"rec.{ext}")
     bl = blocks()
     with open_writer(path, CH, 5000.0) as w:
@@ -22,7 +20,7 @@ def test_roundtrip(tmp_path, ext):
             w.put(b)
     rec = read_recording(path)
     assert rec.channels == CH and rec.sample_rate == 5000.0
-    tol = 1e-6 if ext == "csv" else 0
+    tol = 1e-5 if ext == "csv" else 0
     np.testing.assert_allclose(rec.data, np.concatenate(bl, axis=1), atol=tol)
     assert rec.time[1] == pytest.approx(1 / 5000.0)
     assert rec.start_time

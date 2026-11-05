@@ -63,7 +63,7 @@ class BlockWriter:
 
 
 class NpzWriter(BlockWriter):
-    """Keeps blocks in memory and saves once on close. Use HDF5 or CSV for long runs."""
+    """Keeps blocks in memory and saves once on close. Use CSV for long runs."""
 
     def _open(self) -> None:
         self._blocks = []
@@ -77,26 +77,6 @@ class NpzWriter(BlockWriter):
                  sample_rate=self.sample_rate, start_time=self.start_time)
 
 
-class Hdf5Writer(BlockWriter):
-    def _open(self) -> None:
-        import h5py
-        n = len(self.channels)
-        self._f = h5py.File(self.path, "w")
-        self._ds = self._f.create_dataset("data", shape=(n, 0), maxshape=(n, None),
-                                          dtype="f8", chunks=(n, 4096))
-        self._f.attrs["channels"] = np.array(self.channels, dtype="S")
-        self._f.attrs["sample_rate"] = self.sample_rate
-        self._f.attrs["start_time"] = self.start_time
-
-    def _write(self, block: np.ndarray) -> None:
-        n0 = self._ds.shape[1]
-        self._ds.resize(n0 + block.shape[1], axis=1)
-        self._ds[:, n0:] = block
-
-    def _finish(self) -> None:
-        self._f.close()
-
-
 class CsvWriter(BlockWriter):
     def _open(self) -> None:
         self._f = open(self.path, "w", newline="")
@@ -106,13 +86,14 @@ class CsvWriter(BlockWriter):
     def _write(self, block: np.ndarray) -> None:
         t = (self.samples_written + np.arange(block.shape[1])) / self.sample_rate
         rows = np.column_stack([t, block.T])
-        np.savetxt(self._f, rows, delimiter=",", fmt="%.9g")
+        # 6 significant digits is finer than a 16-bit converter resolves and halves the file size
+        np.savetxt(self._f, rows, delimiter=",", fmt=["%.9g"] + ["%.6g"] * block.shape[0])
 
     def _finish(self) -> None:
         self._f.close()
 
 
-_WRITERS = {"npz": NpzWriter, "h5": Hdf5Writer, "hdf5": Hdf5Writer, "csv": CsvWriter}
+_WRITERS = {"npz": NpzWriter, "csv": CsvWriter}
 
 
 def open_writer(path: str, channels: Sequence[str], sample_rate: float, fmt: Optional[str] = None) -> BlockWriter:

@@ -16,11 +16,11 @@ Python 3.9+. Use a fresh environment.
 ```
 git clone https://github.com/curlh/DAQScope.git
 cd DAQScope
-uv sync --extra gui --extra hdf5       # or: pip install -e .[gui,hdf5]
+uv sync --extra gui                    # or: pip install -e .[gui]
 uv run python -m daqscope              # simulated device
 ```
 
-Extras: `gui` (PySide6, pyqtgraph), `hdf5` (h5py), `ni` (nidaqmx), `dev` (pytest).
+Extras: `gui` (PySide6, pyqtgraph), `ni` (nidaqmx), `dev` (pytest).
 
 ## NI hardware
 
@@ -48,7 +48,9 @@ and only rates the card supports for the current selection are offered.
 - Cursors: two time and two voltage cursors, with delta t, 1/delta t and delta V.
 - Measurements per channel: Vpp, max, min, mean, RMS, frequency, period, duty.
 - Display decimation keeps the min and max of every bin, so narrow glitches are not lost.
-- Record to HDF5, CSV or npz on a separate thread. Save writes the frame on screen.
+- Record to CSV (default) or npz on a separate thread. Save writes the frame on screen.
+  CSV has two `#` comment lines (sample rate, start time) and then a `time_s,<channels>` header,
+  so `pandas.read_csv(path, comment="#")` reads it directly.
 - Readout bar: click a channel to hide it, scroll over a tile to step its setting.
 
 ## Python
@@ -71,7 +73,7 @@ from daqscope.io import open_writer
 
 with AcquisitionSession(backend, cfg) as session:
     runner = StreamRunner(session)                  # worker thread, ring buffer, subscribers
-    with open_writer("run.h5", [c.name for c in cfg.channels], cfg.sample_rate) as w:
+    with open_writer("run.csv", [c.name for c in cfg.channels], cfg.sample_rate) as w:
         runner.subscribe(w.put)
         runner.start()
         ...                                         # runner.buffer.latest(n)
@@ -107,7 +109,7 @@ sample rate that follows the timebase, hardware input range tied to V/div.
 ## Development
 
 ```
-pip install -e .[dev,gui,hdf5]
+pip install -e .[dev,gui]
 pytest
 ```
 
