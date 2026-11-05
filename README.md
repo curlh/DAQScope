@@ -39,19 +39,28 @@ and only rates the card supports for the current selection are offered.
 
 ## Scope
 
-- Screen: 10 x 8 divisions, per-channel V/div (1 mV to 5 V) and position, time/div in 1-2-5 steps.
+The window follows a bench scope. The screen has the channel tiles and the horizontal controls
+(time/div, trigger position) underneath. Click a tile to select a channel, scroll over it to step
+its V/div, scroll over the screen to step time/div. The panel on the right shows the menu of the
+selected channel and the trigger. Cursors and measurements are off until you switch them on.
+
+- Screen: 10 x 8 divisions, per-channel V/div (1 mV to 5 V), position and invert, time/div in 1-2-5 steps.
 - Trigger: rising or falling edge on any channel, Auto / Normal / Single, draggable level line.
   Hysteresis is derived from the noise on the source (6 sigma of the second difference, capped at
   40 % of the peak-to-peak range) or set by hand. The trigger point is interpolated between
   samples. Auto mode rolls at 100 ms/div and slower.
-- Autoset sets V/div, position, trigger level and time/div from the signals.
-- Cursors: two time and two voltage cursors, with delta t, 1/delta t and delta V.
-- Measurements per channel: Vpp, max, min, mean, RMS, frequency, period, duty.
+- Run/Stop, Single, Force trigger, Autoset (V/div, position, trigger level and time/div from the
+  signals), Default setup, Clear.
+- Acquire: Normal or Average over 4, 16 or 64 triggered frames, aligned on the interpolated trigger point.
+- Measure menu: add Vpp, max, min, mean, RMS, frequency, period or duty cycle for the selected
+  channel. They appear in a table, right click removes one.
+- Cursors: two time and two voltage cursors with delta t, 1/delta t and delta V.
 - Display decimation keeps the min and max of every bin, so narrow glitches are not lost.
-- Record to CSV (default) or npz on a separate thread. Save writes the frame on screen.
+- Record to CSV (default) or npz on a separate thread. Save frame writes the frame on screen.
   CSV has two `#` comment lines (sample rate, start time) and then a `time_s,<channels>` header,
   so `pandas.read_csv(path, comment="#")` reads it directly.
-- Readout bar: click a channel to hide it, scroll over a tile to step its setting.
+- Setup: backend, device, inputs and sample rate.
+- Keys: F5 run/stop, F6 single, F7 force, F8 autoset, Ctrl+R record, Ctrl+S save frame.
 
 ## Python
 
