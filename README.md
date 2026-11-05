@@ -26,7 +26,7 @@ Early development (version 0.1 dev).
 Python 3.9 or newer.
 
 ```
-git clone <repository-url>
+git clone https://github.com/curlh/DAQScope.git
 cd DAQScope
 pip install -e .[gui,hdf5]
 ```
